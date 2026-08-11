@@ -59,11 +59,8 @@ separate sittings. All experiments **use only the first rating** and
 reserve the second one exclusively for measuring test-retest reliability.
 This leaves 83,327 of 87,836 rows in use.
 
-A limitation that should be stated plainly: the data file has no session or
-timestamp column. The `Time` column is response duration in seconds, not
-session order. "First" is therefore defined as whichever row appears first
-in the file - the only definition the data supports. Both ratings of a pair
-were verified to always fall in the same split group, for all 4,509 pairs.
+"first" means first row in the file. Checked that
+both ratings of a pair always land in the same split group.
 
 ## 4. Metrics
 
@@ -74,11 +71,8 @@ Comparisons between models use a **paired Wilcoxon signed-rank test** on
 the same 387 units, since every model is evaluated on the same users and
 images.
 
-In tables, values are shown as mean +/- sd across the 387 units. A
-significance marker comes from the paired test, so it can appear even when
-mean +/- sd ranges overlap between two rows - that is correct, because the
-paired test looks at per-unit differences, not the overlap of the
-intervals.
+Tables show mean +/- sd across the 387 units, plus a significance flag from
+the paired test, since it's testing per-unit differences, not the intervals.
 
 ## 5. Heads
 
@@ -99,19 +93,8 @@ weight decay (alpha = 0). Learning rate is chosen from 5 values between
 1e-4 and 1e-2 by a 20% validation split, then refit on the full data with
 the chosen rate.
 
-Early stopping is used (validation_fraction 0.15, n_iter_no_change 20,
-max_iter 2000), which is a stopping rule, not a weight-decay term, so it
-remains consistent with the "no weight decay" requirement.
-
-Why a stopping rule is necessary: on 100 samples per user, a 128-unit MLP
-with no weight decay memorizes the data if trained to convergence (training
-loss falls to about 0.003), and if max_iter is capped too low it never
-converges at all. Either failure mode is unfair to the MLP. Early stopping
-lets it train properly, and the result is that it still performs
-significantly below ridge. See `output/mlp_diagnostics/` for loss curves
-that show real convergence dynamics (loss dropping by 1-2 orders of
-magnitude before flattening, not cut off mid-descent, and not degenerating
-to a constant).
+Early stopping is used (validation_fraction 0.15, n_iter_no_change 20, max_iter 2000), which is a stopping rule.
+Loss curves in `output/mlp_diagnostics/` show it's actually converging properly, not just cut off early.
 
 ## 6. Backbones
 
@@ -122,7 +105,8 @@ to a constant).
 | Qwen3-VL 4B | `vlm4b_LT17.npz` | 2560 |
 | Qwen3-VL 8B | `vlm_LT15.npz` | 4096 |
 
-A fine-tuned backbone must always use the **per-fold** version
+A fine-tuned backbone must always use the **per-fold** version, fine-tuned
+only on that fold's train users.
 
 ## 7. Two upper bounds
 

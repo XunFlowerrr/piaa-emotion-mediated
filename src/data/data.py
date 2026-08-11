@@ -95,7 +95,7 @@ class XpassDataset:
         return df
 
     @staticmethod
-    def per_stimulus(self, df: pd.DataFrame) -> pd.DataFrame:
+    def per_stimulus(df: pd.DataFrame) -> pd.DataFrame:
         # Returns one row mean overall + CORE7 columns per stimulus(image), indexed by stimulus_id (str).
         return df.groupby(df["stimulus_id"].astype(str))[["overall"] + CORE7].mean()
 

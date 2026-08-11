@@ -55,17 +55,22 @@ head is one new class in `mediators.py` or `heads.py`; nothing else in
 
 
 ## Getting started
-
+# use uv
 ```bash
 uv sync
-uv run main.py verify --splits      # check the data split is leak-free
-uv run main.py table1               # the main table
+uv run main.py <experiment name>            
 ```
 
-Data must be placed as follows first (see `docs/DATA.md`):
+# use pip
+```bash
+python -m venv .venv && .venv/bin/pip install numpy pandas scipy scikit-learn matplotlib
+.venv/bin/python main.py <experiment name>
+```
+
+Data must be placed as follows first (see `docs/DATA.md` for more details):
 
 ```
-Dataset/maked/ratings.csv           rating data (request from the dataset owner)
+Dataset/maked/ratings.csv           rating data
 Dataset/split_v4_10group/fold{0..4} user split (already in this repo)
 features/clip_features.npz          pre-extracted features
 ```
@@ -120,45 +125,17 @@ If a run gives numbers far from these, something is wrong.
 
 ## Things to watch out for
 
-**The first-session filter** (`src/data/data.py:100-101`,
-`XpassDataset.__init__`, controlled by `Config.first_session_only`) changes
-every number in the paper with no visible warning if set wrong. `load_raw()`
-loads all 87,836 rows; `XpassDataset` then keeps only the first occurrence
-of each `(user_id, stimulus_id)` pair, by file row order (`sort_values by
-_row`, `keep="first"`). It prints the row count on every load - check that
-it always says 83,327.
-
-**A fine-tuned backbone must be loaded per fold** (`src/modeling/
-backbones.py:55-73`, class `PerFoldBackbone`, used by `BACKBONE_SPECS["clip_
-ft"]` at line 78). Using a single file fine-tuned on all users instead of
-one file per fold leaks test-user information into the features and
-inflated Direct SROCC from 0.432 to 0.534 during development - see
-`docs/DATA.md`.
-
-**The mediator's random-number draw order is fixed**
-(`src/modeling/mediators.py:109-111`, function `build_shared_mediators`).
-One `np.random.default_rng(fold_index)` per fold draws the random
-projection matrix `R` first, then the shuffle permutation, in that order.
-Reordering these two draws changes every downstream number even though the
-method is unchanged, because it changes which random numbers `R` and the
-permutation get.
-
-**Comparing two models always requires a paired test**
-(`src/utils/metrics.py:48`, `wilcoxon_paired`). Every model in this
-codebase is evaluated on the same users and images, so an unpaired test
-would understate significance. Every experiment file uses
-`wilcoxon_paired`, keyed on `(fold, domain, user_id)`, not a plain
-two-sample test.
-
-**The MLP head needs early stopping, not weight decay, to train fairly**
-(`src/modeling/heads.py:81` comment, `MLPHead._make` around line 92-104,
-`Config.mlp_early_stopping`/`mlp_alpha` in `src/config.py`). With
-`mlp_alpha=0` and 128 hidden units on 100 samples, training to convergence
-without early stopping memorizes the data; capping `max_iter` low instead
-means it never converges. `early_stopping=True` is a stopping rule, not a
-regularizer, so it keeps the "no weight decay" requirement while still
-training the MLP properly - see `output/mlp_diagnostics/` for evidence this
-is real, not an artifact of under-training.
+- `Config.first_session_only` (`src/data/data.py`) controls which ratings
+  get used - it prints the row count on load, should always say 83,327.
+- Fine-tuned backbones must load per-fold features (`PerFoldBackbone` in
+  `backbones.py`), not a single all-user file, or it leaks.
+- `mediators.py`'s random/shuffled mediators draw from one RNG per fold in
+  a fixed order (R, then the permutation) - don't reorder those two lines.
+- Model comparisons use `wilcoxon_paired` (paired, keyed on
+  fold/domain/user) everywhere, not a plain two-sample test.
+- MLP head uses early stopping instead of weight decay to avoid
+  memorizing on ~100 samples/user - see `output/mlp_diagnostics/` for the
+  loss curves.
 
 ## Adding a new experiment
 

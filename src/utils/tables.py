@@ -1,9 +1,5 @@
 """Summarize per-unit results into CSV: mean, sd, best-in-group, significance.
 
-CSV only, no LaTeX -- tables for the paper are built by hand from these
-(usually via a spreadsheet), so this stays independent of any one paper's
-layout.
-
 Convention used by every summary CSV:
     <metric>_mean, <metric>_sd   across units
     <metric>_best                True if best in its comparison group

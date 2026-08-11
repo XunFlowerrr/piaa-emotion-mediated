@@ -8,8 +8,7 @@ Examples:
     uv run main.py faithfulness
     uv run main.py mlp_diagnostics
 
-Every command writes to output/<experiment name>/, always with a
-config.json next to it.
+Every command writes to output/<experiment name>/, always with a config.json next to it.
 """
 from __future__ import annotations
 
