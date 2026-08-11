@@ -1,0 +1,19 @@
+__pycache__/
+*.py[oc]
+.venv/
+build/
+dist/
+*.egg-info/
+.ipynb_checkpoints/
+
+# Dataset
+Dataset/maked/
+Dataset/sample/
+Dataset/*.zip
+
+# feature extracted from VLM (overbig)
+features/vlm4b_features.npz
+features/*_raw.npz
+
+# markdown files (Thai ver.)
+docs/*_THAI.md

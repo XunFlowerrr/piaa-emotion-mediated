@@ -1,0 +1,27 @@
+[project]
+name = "piaa-emotion-mediated"
+version = "1.0.0"
+description = "Emotion-mediated personalized image aesthetic assessment"
+requires-python = ">=3.11"
+dependencies = [
+    "numpy>=1.26",
+    "pandas>=2.0",
+    "scipy>=1.11",
+    "scikit-learn>=1.4",
+    "matplotlib>=3.8",
+]
+
+[project.optional-dependencies]
+# only needed to extract features from scratch (normally not required -- use the provided .npz)
+extract = [
+    "torch>=2.2",
+    "transformers>=4.40",
+    "pillow>=10.0",
+]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["src"]

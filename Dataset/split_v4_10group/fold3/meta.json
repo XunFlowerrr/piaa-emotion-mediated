@@ -1,0 +1,20 @@
+{
+  "test_groups": [
+    6,
+    7
+  ],
+  "val_group": 8,
+  "train_groups": [
+    0,
+    1,
+    2,
+    3,
+    4,
+    5,
+    9
+  ],
+  "n_test_users": 30,
+  "n_val_users": 16,
+  "n_train_users": 83,
+  "n_giaa_images": 4561
+}
