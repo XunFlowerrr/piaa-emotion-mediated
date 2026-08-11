@@ -172,7 +172,7 @@ class Pipeline:
                     head = make_head("ridge", self.cfg).fit(M_tr, unit.y_train)
                     store.append(dict(fold=unit.fold, domain=unit.domain,
                                       user_id=unit.user_id, head=head,
-                                      M_eval=M_ev, y_eval=unit.y_eval,
+                                      M_train=M_tr, M_eval=M_ev, y_eval=unit.y_eval,
                                       E_eval=unit.E_eval))
             print(f"  fold {fold.index} done ({len(store)} units)", flush=True)
         return store

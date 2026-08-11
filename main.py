@@ -38,7 +38,8 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("experiment",
                     choices=["table1", "backbone", "efficiency", "faithfulness",
-                            "mlp_diagnostics", "verify"])
+                            "mlp_diagnostics", "stage1_emotion_acc",
+                            "stage2_emotion_importance", "verify"])
     ap.add_argument("--backbone", default="clip", help="default: clip")
     ap.add_argument("--backbones", default="clip,clip_ft,qwen4b,qwen8b")
     ap.add_argument("--n-train", default="10,25,50,100")
@@ -77,6 +78,12 @@ def main(argv=None) -> int:
     elif args.experiment == "mlp_diagnostics":
         from src.experiments import mlp_diagnostics
         mlp_diagnostics.run(cfg, pipe)
+    elif args.experiment == "stage1_emotion_acc":
+        from src.experiments import stage1_emotion_acc
+        stage1_emotion_acc.run(cfg, pipe)
+    elif args.experiment == "stage2_emotion_importance":
+        from src.experiments import stage2_emotion_importance
+        stage2_emotion_importance.run(cfg, pipe)
 
     return 0
 
