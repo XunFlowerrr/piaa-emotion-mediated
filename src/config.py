@@ -65,8 +65,7 @@ class Config:
                 d[k] = v
         path.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
 
-    def run_dir(self, name: str) -> Path:
-        # Output folder for experiment 'name' + dumps config
+    def run_dir(self, name: str) -> Path:\
         d = Path(self.output_dir) / name
         d.mkdir(parents=True, exist_ok=True)
         self.dump(d / "config.json")

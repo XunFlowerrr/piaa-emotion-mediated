@@ -16,7 +16,6 @@ FULL_WIDTH = 7.0
 HEIGHT_2PANEL = 1.9
 HEIGHT_3PANEL = 2.2
 
-# distinguishable even printed in black and white (paired with different marker/hatch)
 BLUE = "#185FA5"     # our model
 GREY = "#9E9E9E"     # baseline
 AMBER = "#BA7517"    # content-free control

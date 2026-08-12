@@ -39,7 +39,8 @@ def main(argv=None) -> int:
     ap.add_argument("experiment",
                     choices=["table1", "backbone", "efficiency", "faithfulness",
                             "mlp_diagnostics", "stage1_emotion_acc",
-                            "stage2_emotion_importance", "verify"])
+                            "stage2_emotion_importance", "fig_faithfulness",
+                            "fig_efficiency", "verify"])
     ap.add_argument("--backbone", default="clip", help="default: clip")
     ap.add_argument("--backbones", default="clip,clip_ft,qwen4b,qwen8b")
     ap.add_argument("--n-train", default="10,25,50,100")
@@ -84,6 +85,14 @@ def main(argv=None) -> int:
     elif args.experiment == "stage2_emotion_importance":
         from src.experiments import stage2_emotion_importance
         stage2_emotion_importance.run(cfg, pipe)
+    elif args.experiment == "fig_faithfulness":
+        from src.utils import fig_faithfulness
+        fig_faithfulness.run(cfg, "sd")
+        fig_faithfulness.run(cfg, "sem")
+    elif args.experiment == "fig_efficiency":
+        from src.utils import fig_efficiency
+        fig_efficiency.run(cfg, "sd")
+        fig_efficiency.run(cfg, "sem")
 
     return 0
 
