@@ -76,29 +76,53 @@ class Pipeline:
                 E_eval=agg.loc[ev, CORE7].to_numpy(float),
             )
 
-    def shared_context(self, fold, domain: str, feats, with_emotion_mlp: bool = False):
-        """Population-level data for this fold/domain, plus fitted mediators."""
-        gen = self.ds.subset(domain=domain, users=fold.train_users)
-        gen = gen[gen["stimulus_id"].astype(str).isin(feats)]
-        g = self.ds.per_stimulus(gen)
-        Xg = self.backbone.matrix(feats, g.index)
-        Eg = g[CORE7].to_numpy(float)
-        yg = g["overall"].to_numpy(float)
+    def group_data(self, users, domain: str, feats):
+        """Image-level (features, population-mean emotions, mean score) for a
+        set of users. Used for both the train group and the validation group."""
+        d = self.ds.subset(domain=domain, users=users)
+        d = d[d["stimulus_id"].astype(str).isin(feats)]
+        g = self.ds.per_stimulus(d)
+        return (self.backbone.matrix(feats, g.index),
+                g[CORE7].to_numpy(float),
+                g["overall"].to_numpy(float))
 
-        emo_mlp = (fit_emotion_mlp(Xg, Eg, self.cfg, seed=fold.index)
+    def shared_context(self, fold, domain: str, feats, with_emotion_mlp: bool = False,
+                       seed: int = 0):
+        """Population-level data for this fold/domain, plus fitted mediators.
+
+        Every shared component built here has its hyperparameter selected on
+        the validation user group (disjoint from train and test users), never
+        on train-group data alone and never on anything a test user touched.
+
+        seed  run-level seed for multi-seed averaging; seed=0 keeps the
+              original RNG draws exactly.
+        """
+        Xg, Eg, yg = self.group_data(fold.train_users, domain, feats)
+        val_E = self.val_data(fold, domain, feats)[:2]   # (X_val, E_val)
+
+        emo_seed = fold.index if seed == 0 else fold.index + seed * 1_000_003
+        emo_mlp = (fit_emotion_mlp(Xg, Eg, self.cfg, seed=emo_seed, val=val_E)
                    if with_emotion_mlp else None)
         meds = build_shared_mediators(Xg, Eg, self.cfg, fold.index,
-                                      emotion_mlp=emo_mlp)
+                                      emotion_mlp=emo_mlp, seed=seed, val=val_E)
         return Xg, Eg, yg, meds
+
+    def val_data(self, fold, domain: str, feats):
+        """(X, E, y) of the held-out validation user group for this fold/domain."""
+        return self.group_data(fold.val_users, domain, feats)
 
     def run_grid(self, mediators: list[str], heads: list[str],
                  n_train: int | None = None, include_population: bool = True,
                  include_gt_upper_bound: bool = True,
-                 domains: list[str] | None = None) -> pd.DataFrame:
+                 domains: list[str] | None = None, seed: int = 0) -> pd.DataFrame:
         """Loop (fold, domain, user) x (mediator, head), return per-unit results.
 
         include_population      add the no-personalization (GIAA) baseline
         include_gt_upper_bound  add the ceiling that uses true emotion ratings
+        seed  run-level seed -- every stochastic point (random/shuffled
+              mediator, MLP head init+split) is tied to this seed. seed=0
+              reproduces the original single-seed behavior exactly (see
+              table1.py, which loops seeds and averages).
         """
         cfg = self.cfg
         domains = domains or DOMAINS
@@ -109,14 +133,18 @@ class Pipeline:
             feats = self.backbone.features_for_fold(fold.index)
             for dom in domains:
                 Xg, Eg, yg, meds = self.shared_context(
-                    fold, dom, feats, with_emotion_mlp=need_mlp_mediator)
+                    fold, dom, feats, with_emotion_mlp=need_mlp_mediator, seed=seed)
 
-                # baseline that never sees the target user's own ratings (GIAA)
+                # baseline that never sees the target user's own ratings (GIAA).
+                # shared component -> hyperparameter selected on the val group
                 pop_models = {}
                 if include_population:
+                    Xv, _, yv = self.val_data(fold, dom, feats)
                     for h in heads:
-                        seed = 100 + fold.index if h == "mlp" else 0
-                        pop_models[h] = make_head(h, cfg, seed=seed).fit(Xg, yg)
+                        base = 100 + fold.index if h == "mlp" else 0
+                        hseed = base if (h != "mlp" or seed == 0) else base + seed * 1_000_003
+                        pop_models[h] = make_head(h, cfg, seed=hseed).fit(
+                            Xg, yg, val=(Xv, yv))
 
                 for unit in self.iter_units(fold, dom, feats, n_train=n_train):
                     base = dict(fold=unit.fold, domain=unit.domain,
@@ -137,7 +165,9 @@ class Pipeline:
                             med = meds[key]
                             M_tr = med.transform(unit.X_train)
                             M_ev = med.transform(unit.X_eval)
-                            head = make_head(h, cfg, seed=unit.user_id).fit(M_tr, unit.y_train)
+                            hseed = (unit.user_id if seed == 0
+                                    else unit.user_id + seed * 1_000_003)
+                            head = make_head(h, cfg, seed=hseed).fit(M_tr, unit.y_train)
                             p = head.predict(M_ev)
                             rows.append({**base, "mediator": mname, "head": h,
                                          "eff_dof": head.effective_dof(),

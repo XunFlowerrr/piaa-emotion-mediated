@@ -24,8 +24,11 @@ def run(cfg, pipeline, n_list: list[int]) -> pd.DataFrame:
         for dom in DOMAINS:
             Xg, Eg, yg, meds = pipeline.shared_context(fold, dom, feats)
             emotion = meds["emotion"]
-            # population-level formula on the emotion mediator (Pop-zero)
-            popform = make_head("ridge", cfg).fit(emotion.transform(Xg), yg)
+            # population-level formula on the emotion mediator (Pop-zero).
+            # shared component -> penalty selected on the val user group
+            Xv, _, yv = pipeline.val_data(fold, dom, feats)
+            popform = make_head("ridge", cfg).fit(
+                emotion.transform(Xg), yg, val=(emotion.transform(Xv), yv))
 
             for n in n_list:
                 for unit in pipeline.iter_units(fold, dom, feats, n_train=n):

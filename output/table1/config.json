@@ -4,6 +4,7 @@
   "features_dir": "D:\\Pin\\STUDY\\0CU\\แลกเปลี่ยน\\JAIST Internship2025\\PUBLISH\\piaa-emotion-mediated\\features",
   "output_dir": "D:\\Pin\\STUDY\\0CU\\แลกเปลี่ยน\\JAIST Internship2025\\PUBLISH\\piaa-emotion-mediated\\output",
   "figures_dir": "D:\\Pin\\STUDY\\0CU\\แลกเปลี่ยน\\JAIST Internship2025\\PUBLISH\\piaa-emotion-mediated\\paper\\figures",
+  "tables_dir": "D:\\Pin\\STUDY\\0CU\\แลกเปลี่ยน\\JAIST Internship2025\\PUBLISH\\piaa-emotion-mediated\\paper\\tables",
   "first_session_only": true,
   "n_folds": 5,
   "n_eval": 50,

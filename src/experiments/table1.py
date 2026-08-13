@@ -8,8 +8,13 @@ Hybrid (our 7-dim emotion mediator), plus two upper bounds -- GT emotions
 Everything is scored on the same users/images so rows compare directly with
 a paired test.
 
-Writes per_unit.csv (raw) and summary.csv (mean/sd per domain, plus a
-best-row flag and Wilcoxon significance vs. Hybrid+Ridge) to output/table1/.
+Every row is run under 3 seeds (0,1,2) and averaged per unit before
+summarizing, since random/shuffled mediators and the MLP head are stochastic.
+seed=0 alone reproduces the original single-seed run bit-for-bit.
+
+Writes per_unit.csv (seed-averaged), per_unit_by_seed.csv (raw, one row per
+seed), and summary.csv (mean/sd per domain, plus a best-row flag and
+Wilcoxon significance vs. Hybrid+Ridge) to output/table1/.
 """
 from __future__ import annotations
 
@@ -31,15 +36,52 @@ ROWS = [
 
 REFERENCE = ("emotion", "ridge")   # row that Wilcoxon significance is computed against
 
+#: rows involving random/shuffled mediators or an MLP head are stochastic
+#: (random projection, label permutation, MLP weight init + internal split);
+#: we repeat the whole grid under these seeds and average per unit so a
+#: single unlucky draw doesn't set the reported number. seed=0 reproduces
+#: the original single-seed run bit-for-bit (see pipeline.run_grid).
+SEEDS = (0, 1, 2)
 
-def run(cfg, pipeline, dataset) -> pd.DataFrame:
+
+def run_one_seed(cfg, pipeline, seed: int) -> pd.DataFrame:
+    """One seed's full grid, written to its own file so seeds can run as
+    separate processes in parallel (they are completely independent)."""
     out_dir = cfg.run_dir("table1")
-    df = pipeline.run_grid(
+    print(f"[table1] seed {seed}")
+    d = pipeline.run_grid(
         mediators=["identity", "random", "shuffled", "pca", "emotion"],
         heads=["ridge", "mlp"],
         include_population=True,
         include_gt_upper_bound=True,
+        seed=seed,
     )
+    d["seed"] = seed
+    d.to_csv(out_dir / f"per_unit_seed{seed}.csv", index=False)
+    print(f"[table1] seed {seed} written ({len(d)} rows)")
+    return d
+
+
+def run(cfg, pipeline, dataset, seeds=None) -> pd.DataFrame:
+    """Run the seeds that aren't on disk yet, then merge and summarize."""
+    out_dir = cfg.run_dir("table1")
+    seeds = list(SEEDS if seeds is None else seeds)
+
+    raw = []
+    for s in seeds:
+        f = out_dir / f"per_unit_seed{s}.csv"
+        if f.exists():
+            print(f"[table1] seed {s} already on disk, reusing")
+            raw.append(pd.read_csv(f))
+        else:
+            raw.append(run_one_seed(cfg, pipeline, s))
+
+    raw_df = pd.concat(raw, ignore_index=True)
+    raw_df.to_csv(out_dir / "per_unit_by_seed.csv", index=False)
+
+    key = ["mediator", "head", "fold", "domain", "user_id"]
+    value_cols = ["ccc", "srocc", "plcc", "eff_dof"]
+    df = raw_df.groupby(key, as_index=False)[value_cols].mean()
     df.to_csv(out_dir / "per_unit.csv", index=False)
 
     retest = test_retest(cfg, dataset)
