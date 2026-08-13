@@ -87,7 +87,7 @@ def run(cfg, err: str = "sd", domain_split: bool = False):
         axes[1, 0].set_ylabel("PLCC")
         axes[0, 0].legend(fontsize=6.5, loc="lower right")
         fig.tight_layout()
-        save(fig, cfg.output_dir / f"fig_efficiency_domains_{err}")
+        save(fig, cfg.figures_dir / f"fig_efficiency_domains_{err}")
     else:
         fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.4))
         plot_panel(axes[0], df, "srocc", n_list, err, annotate_crossover=True)

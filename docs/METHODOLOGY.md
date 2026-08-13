@@ -38,9 +38,35 @@ This closes three leakage points at once:
 
 1. The mediator is fit only on train-group images, so it never sees a test
    user's images.
-2. Hyperparameters are selected on the validation group, which is disjoint
-   from test.
-3. Each test user's own images are split into support and eval sets.
+2. Every **shared** hyperparameter is selected on the validation group,
+   which is disjoint from both train and test users (and whose images are
+   disjoint from theirs). See "Where each hyperparameter comes from" below.
+3. Each test user's own images are split into support and eval sets, so
+   the head never trains on what it's scored on.
+
+### Where each hyperparameter comes from
+
+One rule, applied everywhere:
+
+| component | shared or personal? | hyperparameter selected on |
+|---|---|---|
+| Stage-1 emotion mediator (ridge) | shared | validation user group |
+| Shuffled mediator (ridge) | shared | validation user group |
+| Stage-1 emotion mediator (MLP) | shared | validation user group |
+| Population / GIAA head (ridge, MLP) | shared | validation user group |
+| Pop-zero formula in `efficiency` | shared | validation user group |
+| Per-user head (ridge) | personal | that user's own support set (`RidgeCV`) |
+| Per-user head (MLP) | personal | 80/20 split of that user's own support set |
+
+The two personal rows cannot use the validation group: those users are
+*different people*, and the whole point of a personal head is that it is
+fit to one individual's taste. What matters for them is that the user's
+50 evaluation images are held out before anything is fit and are never
+touched during selection - which `verify --splits` and the fixed
+support/eval split below both enforce.
+
+PCA (`n_components=7`) and the random projection have no hyperparameter to
+select, so nothing is chosen for them from any data.
 
 `uv run main.py verify --splits` checks points 1 and 3 automatically.
 
@@ -78,9 +104,19 @@ the paired test, since it's testing per-unit differences, not the intervals.
 
 ### Ridge
 
-`RidgeCV` selects alpha by generalized cross-validation from a grid of
-**11 values from 1e-2 to 1e3** (`numpy.logspace(-2, 3, 11)`). Features are
-always standardized first.
+Alpha comes from the same grid everywhere: **11 values from 1e-2 to 1e3**
+(`numpy.logspace(-2, 3, 11)`). Features are always standardized first.
+
+How the winner is picked depends on whether the component is shared or
+personal (Sec. 2). A **shared** ridge is fit on the train group at each
+alpha and scored by MSE on the validation group; the best alpha wins. A
+**personal** ridge uses `RidgeCV`'s generalized (efficient leave-one-out)
+cross-validation inside that user's own support set.
+
+Fitting a mediator on shuffled labels and then selecting its alpha honestly
+drives it to the top of the grid (1e3, i.e. maximal shrinkage), because
+there is genuinely no signal for the validation group to reward. That is
+the control behaving correctly, not a bug.
 
 We also report effective degrees of freedom, defined as
 `tr(Z(Z'Z + alpha*I)^-1 Z')` at the selected alpha, computed on standardized
@@ -89,9 +125,11 @@ features and averaged across units. This is defined only for linear heads.
 ### MLP
 
 A single hidden layer of 128 units, ReLU, trained with MSE loss and no
-weight decay (alpha = 0). Learning rate is chosen from 5 values between
-1e-4 and 1e-2 by a 20% validation split, then refit on the full data with
-the chosen rate.
+weight decay (alpha = 0). The learning rate is chosen from 5 values
+between 1e-4 and 1e-2, then the model is refit on the full data with the
+chosen rate. Which data scores the 5 candidates follows the same rule as
+ridge: a shared MLP is scored on the validation user group, a personal MLP
+on a 20% split of that user's own support set.
 
 Early stopping is used (validation_fraction 0.15, n_iter_no_change 20, max_iter 2000), which is a stopping rule.
 Loss curves in `output/mlp_diagnostics/` show it's actually converging properly, not just cut off early.
@@ -121,6 +159,10 @@ Neither is included when identifying the best-performing predictive model.
 
 ## 8. Faithfulness tests
 
+- **Ablation** holds one emotion constant at its support-set mean (the
+  highest-weighted, an average-weighted, or the lowest-weighted concept)
+  and re-scores the user, to see how much each concept's presence is
+  actually load-bearing for that user's predictions.
 - **Formula swap** compares a user's own formula against the
   population-mean formula and against 5 randomly sampled other users'
   formulas, on the same predictions.
@@ -130,16 +172,29 @@ Neither is included when identifying the best-performing predictive model.
 
 ## 9. Reproducibility
 
-Every source of randomness is deterministic.
+Every source of randomness is seeded, so a single run (seed 0) is fully
+deterministic. Table 1 is the only experiment whose reported rows include
+both a stochastic mediator (random/shuffled) and an MLP head; every other
+experiment (`backbone`, `efficiency`, `faithfulness`,
+`stage1_emotion_acc`, `stage2_emotion_importance`) only ever reports the
+`emotion` mediator with a ridge head, which has no randomness at all -
+one run is already the final number for those.
 
-| point | seed source |
+For Table 1, every stochastic point is repeated under **3 seeds (0, 1,
+2)** and averaged per unit before summarizing, since a single unlucky
+draw for the random/shuffled mediators or the MLP init shouldn't set the
+reported number. seed 0 reproduces the original single-seed numbers
+bit-for-bit; seeds 1 and 2 offset every base seed below by
+`+ run_seed * 1_000_003`.
+
+| point | base seed source (seed 0) |
 |---|---|
-| support/eval split per user | `42 + user_id` |
+| support/eval split per user | `42 + user_id` (never reseeded - fixed across runs) |
 | mediator random projection and shuffle | one generator per fold, drawing R first, then the permutation |
 | per-user MLP | `user_id` |
 | population-level MLP | `100 + fold` |
 | MLP emotion mediator | `fold` |
-| PCA | 0 |
+| PCA | 0 (never reseeded - PCA is deterministic given the data) |
 
 The order in which the random and shuffled mediators draw random numbers is
 fixed; changing that order changes the numbers even though the method is
