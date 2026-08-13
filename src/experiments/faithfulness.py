@@ -1,15 +1,17 @@
 """Is the per-user formula actually a faithful explanation, or just numbers
 that happen to fit?
 
-Two checks:
-1. Formula swap - score a user with their own formula vs. the population-
-   mean formula vs. another random user's formula. If formulas are really
-   personal, "own" should win.
-2. Weight vs. empirical correlation - do the 7 ridge weights line up with
+Three checks:
+1. Ablation - hold one emotion constant (at its support-set mean) and see
+   how much accuracy drops. Dropping the top-weighted emotion should hurt
+   more than dropping the bottom-weighted one.
+2. Formula swap - score a user with their own formula vs. the population-
+   mean formula vs. another random user's formula. "Own" should win if
+   formulas are really personal.
+3. Weight vs. empirical correlation - do the 7 ridge weights line up with
    how much each emotion actually correlates with that user's ratings?
-   Should be positive if the formula means what it looks like it means.
 
-Output: output/faithfulness/{formula_swap,weight_vs_empirical}.csv, summary.csv
+Output: output/faithfulness/{ablation,formula_swap,weight_vs_empirical}.csv, summary.csv
 """
 from __future__ import annotations
 
@@ -28,18 +30,51 @@ def run(cfg, pipeline):
     out_dir = cfg.run_dir("faithfulness")
     store = pipeline.collect_user_heads(mediator="emotion")
 
+    abl = ablation(store)
+    abl.to_csv(out_dir / "ablation.csv", index=False)
+
     swap = formula_swap(store)
     swap.to_csv(out_dir / "formula_swap.csv", index=False)
 
     align = weight_vs_empirical(store)
     align.to_csv(out_dir / "weight_vs_empirical.csv", index=False)
 
-    summary = pd.concat([summarize_swap(swap), summarize_align(align)],
-                        keys=["formula_swap", "weight_vs_empirical"],
+    summary = pd.concat([summarize_ablation(abl), summarize_swap(swap),
+                        summarize_align(align)],
+                        keys=["ablation", "formula_swap", "weight_vs_empirical"],
                         names=["test"])
     summary.to_csv(out_dir / "summary.csv")
     print(summary.to_string(float_format=lambda x: f"{x:.4f}"))
-    return swap, align
+    return abl, swap, align
+
+
+def ablation(store) -> pd.DataFrame:
+    """Hold each emotion constant at its support-set mean, one at a time."""
+    rows = []
+    for s in store:
+        head, M_tr, M_ev, y = s["head"], s["M_train"], s["M_eval"], s["y_eval"]
+        w = np.abs(head.weights())
+        mu = M_tr.mean(axis=0)
+        base_p = head.predict(M_ev)
+
+        def hold(j):
+            M = M_ev.copy()
+            M[:, j] = mu[j]
+            p = head.predict(M)
+            return srocc(y, p), plcc(y, p)
+
+        top_j, bot_j = int(w.argmax()), int(w.argmin())
+        top_s, top_p = hold(top_j)
+        bot_s, bot_p = hold(bot_j)
+        all_j = [hold(j) for j in range(len(w))]
+        rows.append(dict(
+            fold=s["fold"], domain=s["domain"], user_id=s["user_id"],
+            base_srocc=srocc(y, base_p), base_plcc=plcc(y, base_p),
+            top1_srocc=top_s, top1_plcc=top_p,
+            bottom1_srocc=bot_s, bottom1_plcc=bot_p,
+            avg1_srocc=float(np.mean([r[0] for r in all_j])),
+            avg1_plcc=float(np.mean([r[1] for r in all_j]))))
+    return pd.DataFrame(rows)
 
 
 def formula_swap(store) -> pd.DataFrame:
@@ -82,6 +117,18 @@ def weight_vs_empirical(store) -> pd.DataFrame:
                          spearman=float(spearmanr(w[ok], emp[ok]).statistic),
                          pearson=float(np.corrcoef(w[ok], emp[ok])[0, 1])))
     return pd.DataFrame(rows)
+
+
+def summarize_ablation(b: pd.DataFrame) -> pd.DataFrame:
+    rows = []
+    for label, k in [("full", "base"), ("top1_held", "top1"),
+                     ("avg1_held", "avg1"), ("bottom1_held", "bottom1")]:
+        r = dict(condition=label)
+        for m in ("srocc", "plcc"):
+            mean, sd = mean_sd(b[f"{k}_{m}"])
+            r[f"{m}_mean"], r[f"{m}_sd"] = mean, sd
+        rows.append(r)
+    return pd.DataFrame(rows).set_index("condition")
 
 
 def summarize_swap(b: pd.DataFrame) -> pd.DataFrame:
