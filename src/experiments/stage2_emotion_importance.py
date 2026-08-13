@@ -15,6 +15,16 @@ import pandas as pd
 from src.data.data import CORE7, DOMAINS
 from src.modeling.heads import make_head
 
+#: A coefficient this small is zero for our purposes, and the sign of a zero is
+#: not a fact about anyone's taste. Ridge shrinks weak emotions all the way
+#: down: 21 of 387 GT weights come out exactly 0.0 and 19 more land below 1e-9
+#: (values like 5e-31). Whether such a weight ends up at +5e-31, -3e-31 or 0.0
+#: depends on the platform's last bit, so testing `w > 0` moved the reported
+#: percentage by one unit between machines. Requiring a real margin makes the
+#: count identical everywhere. Nothing sits between 1e-9 and 1e-3, so the
+#: threshold has no effect on any coefficient that means anything.
+SIGN_TOL = 1e-9
+
 
 def run(cfg, pipeline):
     out_dir = cfg.run_dir("stage2_emotion_importance")
@@ -48,11 +58,11 @@ def run(cfg, pipeline):
                 dd = d[d.domain == dom][col]
                 row[f"{dom}_mean"] = dd.abs().mean()
                 row[f"{dom}_sd"] = dd.abs().std()
-                row[f"{dom}_pct_pos"] = 100 * (dd > 0).mean()
+                row[f"{dom}_pct_pos"] = 100 * (dd > SIGN_TOL).mean()
             all_ = d[col]
             row["avg_mean"] = all_.abs().mean()
             row["avg_sd"] = all_.abs().std()
-            row["avg_pct_pos"] = 100 * (all_ > 0).mean()
+            row["avg_pct_pos"] = 100 * (all_ > SIGN_TOL).mean()
             lines.append(row)
 
     summary = pd.DataFrame(lines)

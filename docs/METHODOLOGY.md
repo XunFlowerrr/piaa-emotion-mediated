@@ -187,6 +187,24 @@ reported number. seed 0 reproduces the original single-seed numbers
 bit-for-bit; seeds 1 and 2 offset every base seed below by
 `+ run_seed * 1_000_003`.
 
+### What "reproducible" does and does not promise
+
+**Same machine, same environment: byte-identical.** `verify --repro` checks
+this and passes on `efficiency`, `stage1_emotion_acc` and
+`stage2_emotion_importance`.
+
+**Different platform: identical to about 1e-5, not bit-identical.** A run on
+Linux/Python 3.14 against Windows/Python 3.13 agrees to ~1e-5 on SROCC and
+~1e-8 on PLCC, because a different BLAS build sums in a different order.
+Every number the paper reports to three decimals is unaffected.
+
+The one quantity that was *not* robust to this was the percentage of positive
+coefficients, because it is a sign test and ridge shrinks weak emotions to
+exactly zero - the sign of a zero is decided by the last bit. That is now
+counted with a tolerance (`SIGN_TOL` in `stage2_emotion_importance.py`), so it
+agrees across platforms too. Anyone reproducing on other hardware should
+expect the third decimal of a correlation to move and nothing else.
+
 | point | base seed source (seed 0) |
 |---|---|
 | support/eval split per user | `42 + user_id` (never reseeded - fixed across runs) |

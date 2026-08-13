@@ -65,7 +65,9 @@ class Head(ABC):
 #: BLAS builds, so a strict `<` could hand the win to a different alpha on
 #: another machine and silently produce a different model. Anything inside
 #: this margin is genuinely indistinguishable, so we break the tie by rule
-#: instead of by rounding noise.
+#: instead of by rounding noise. This narrows the cross-platform gap but does
+#: not close it: see "What reproducible does and does not promise" in
+#: docs/METHODOLOGY.md for what actually holds across machines.
 ALPHA_TIE_RTOL = 1e-9
 
 
