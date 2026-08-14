@@ -5,6 +5,14 @@ Fine-tunes CLIP's vision tower to predict the population-mean target
 be used for personalized prediction. Run once per fold; produces
 clip_ftpf_{target}_v4_fold{k}.npz.
 
+*** features must come out of the same place as the frozen baseline ***
+extract_clip_features.py uses CLIPModel.get_image_features(), which is
+visual_projection(vision_model(px).pooler_output) and gives 512 dims. So the
+projection is kept and fine-tuned here too, and features are read after it.
+Reading pooler_output directly instead would give 768 dims, and then the
+backbone comparison would be varying the feature width at the same time as
+the fine-tuning, with no way to tell which one moved the result.
+
 Usage:
   python src/data/finetune_clip_perfold.py --fold 0 --target overall --v4 \
     --out clip_ftpf_overall_v4_fold0.npz --epochs 8 --batch_size 12
@@ -23,7 +31,7 @@ from transformers import CLIPImageProcessor
 
 from PIL import Image
 from torch.utils.data import Dataset
-from transformers import CLIPVisionModel
+from transformers import CLIPModel
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
 EMO9 = ["Like", "Beautiful", "Distasteful", "Impressed", "Intellectually",
@@ -61,16 +69,22 @@ class ImgDS(Dataset):
 
 
 class CLIPRegressor(nn.Module):
-    """CLIP Vision model with a linear head on top for regression."""
+    """CLIP vision tower + its projection, with a linear head for regression.
+
+    feat is taken after visual_projection, so it is the same 512-dim space
+    CLIPModel.get_image_features() returns and the frozen baseline uses.
+    """
     def __init__(self, out_dim):
         super().__init__()
-        self.vision = CLIPVisionModel.from_pretrained("openai/clip-vit-base-patch16")
-        h = self.vision.config.hidden_size
-        self.head = nn.Linear(h, out_dim)
+        clip = CLIPModel.from_pretrained("openai/clip-vit-base-patch16")
+        self.vision = clip.vision_model
+        self.visual_projection = clip.visual_projection      # 768 -> 512
+        self.feat_dim = clip.config.projection_dim           # 512
+        self.head = nn.Linear(self.feat_dim, out_dim)
 
     def forward(self, px, return_feat=False):
         out = self.vision(pixel_values=px)
-        feat = out.pooler_output
+        feat = self.visual_projection(out.pooler_output)
         if return_feat:
             return feat
         return self.head(feat)
@@ -194,7 +208,7 @@ def main():
     allpaths = [pth(s) for s in allsid]
     ds = ImgDS(allsid, allpaths, np.zeros((len(allsid), len(tgt_cols)), np.float32), proc)
     loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
-    feats = np.zeros((len(allsid), model.vision.config.hidden_size), np.float32)
+    feats = np.zeros((len(allsid), model.feat_dim), np.float32)
     model.eval()
     with torch.no_grad():
         for px, _, idxb in tqdm(loader, desc=f"f{args.fold} extract"):

@@ -77,7 +77,9 @@ def run(cfg, err: str = "sd", domain_split: bool = False):
     if domain_split:
         domains = ["art", "fashion", "landscape"]
         titles = ["Artwork", "Fashion", "Landscape"]
-        fig, axes = plt.subplots(2, 3, figsize=(7.0, 3.4), sharex=True)
+        # sharey too: with free y-limits fashion looks much closer to the
+        # other domains than it is, which is the opposite of the point
+        fig, axes = plt.subplots(2, 3, figsize=(7.0, 3.4), sharex=True, sharey=True)
         for col, (dom, title) in enumerate(zip(domains, titles)):
             plot_panel(axes[0, col], df, "srocc", n_list, err, domain=dom, annotate_crossover=True)
             axes[0, col].set_title(title, fontsize=9)
