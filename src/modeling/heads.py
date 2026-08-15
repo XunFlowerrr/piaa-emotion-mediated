@@ -102,8 +102,17 @@ class RidgeHead(Head):
         self._pipe = None
         self._M_train = None
 
-    def fit(self, M, y, val=None):
-        if val is None:
+    def fit(self, M, y, val=None, frozen_alpha=None):
+        """frozen_alpha, if given, skips selection entirely -- used when the
+        penalty was already chosen once for the whole (fold, domain, n_train)
+        by mirroring the test protocol inside the validation group, and is
+        then applied identically to every test user (see
+        Pipeline.select_personal_hyperparam)."""
+        if frozen_alpha is not None:
+            self._alpha = float(frozen_alpha)
+            self._pipe = make_pipeline(StandardScaler(), Ridge(alpha=self._alpha))
+            self._pipe.fit(M, y)
+        elif val is None:
             self._pipe = make_pipeline(StandardScaler(), RidgeCV(alphas=self.alphas))
             self._pipe.fit(M, y)
             self._alpha = float(self._pipe[-1].alpha_)
@@ -131,10 +140,15 @@ class RidgeHead(Head):
 class MLPHead(Head):
     """Single hidden layer of 128 units, MSE loss, no L2.
 
-    early_stopping=True is a stopping rule, not weight regularization --
-    needed because on 100 samples, training to convergence memorizes the
-    data (train loss ~0.003), and capping max_iter low instead just means
-    it never converges. Checked both failure modes, see docs/METHODOLOGY.md.
+    Trains for a fixed cfg.mlp_max_iter epochs; early_stopping is off.
+    early_stopping=True carves an internal validation_fraction split out of
+    whatever M it's given, and at a support size of 10 that split is 1-2
+    samples -- not a usable stopping signal, and it silently shrinks the data
+    the fit actually sees. A fixed epoch count is a stated, identical budget
+    for every unit instead. (Previously used early_stopping to stop before
+    100-sample support sets memorized the data; that overfitting risk is now
+    compensated by choosing lr on the validation group rather than by
+    per-unit early stopping. See docs/METHODOLOGY.md.)
     """
 
     name = "mlp"
@@ -160,11 +174,15 @@ class MLPHead(Head):
             random_state=self.seed,
         ))
 
-    def fit(self, M, y, val=None):
+    def fit(self, M, y, val=None, frozen_lr=None):
+        """frozen_lr, if given, skips the lr search entirely -- same role as
+        RidgeHead's frozen_alpha (see Pipeline.select_personal_hyperparam)."""
         M = np.asarray(M, float)
         y = np.asarray(y, float)
 
-        if val is None:
+        if frozen_lr is not None:
+            best_lr = float(frozen_lr)
+        elif val is None:
             # personal head: hold out part of this user's own support set
             n = len(M)
             rng = np.random.RandomState(self.seed)
@@ -172,22 +190,31 @@ class MLPHead(Head):
             nv = max(10, int(self.cfg.mlp_search_val_frac * n))
             va, tr = idx[:nv], idx[nv:]
             M_tr, y_tr, M_va, y_va = M[tr], y[tr], M[va], y[va]
+            best_lr = self._search(M_tr, y_tr, M_va, y_va)
         else:
             # shared component: score on the held-out validation user group
             M_va, y_va = np.asarray(val[0], float), np.asarray(val[1], float)
-            M_tr, y_tr = M, y
+            best_lr = self._search(M, y, M_va, y_va)
 
-        best, best_lr = np.inf, self.cfg.mlp_lr_grid[0]
-        for lr in self.cfg.mlp_lr_grid:
-            m = self._make(lr)
-            m.fit(M_tr, y_tr)
-            mse = float(np.mean((m.predict(M_va) - y_va) ** 2))
-            if mse < best:
-                best, best_lr = mse, lr
         self.best_lr_ = float(best_lr)
         self._pipe = self._make(best_lr)
         self._pipe.fit(M, y)
         return self
+
+    def _search(self, M_tr, y_tr, M_va, y_va) -> float:
+        # same tie-break spirit as select_alpha_on_val: don't let the last few
+        # bits of a platform-dependent MSE pick the learning rate. Ties within
+        # ALPHA_TIE_RTOL go to the smallest lr (mlp_lr_grid is ascending),
+        # since a smaller step is the more conservative, less divergence-prone
+        # choice -- the MLP analogue of "the stronger penalty" for ridge.
+        grid = np.asarray(self.cfg.mlp_lr_grid, float)
+        mses = np.empty(len(grid))
+        for i, lr in enumerate(grid):
+            m = self._make(float(lr))
+            m.fit(M_tr, y_tr)
+            mses[i] = np.mean((m.predict(M_va) - y_va) ** 2)
+        tied = mses <= mses.min() * (1.0 + ALPHA_TIE_RTOL)
+        return float(grid[tied][0])
 
     def predict(self, M):
         return self._pipe.predict(M)

@@ -68,7 +68,7 @@ Extracted in advance and stored as `.npz`, each with two keys:
 |---|---|---|---|
 | `clip_features.npz` | CLIP ViT-B/16, frozen | 512 | default for every experiment |
 | `clip_ftpf_overall_v4_fold{0..4}.npz` | CLIP fine-tuned per fold | 768 | must be loaded per fold |
-| `vlm4b_LT17.npz` | Qwen3-VL 4B, layer 17 | 2560 | |
+| `vlm4b_LT15.npz` | Qwen3-VL 4B, layer 15 | 2560 | |
 | `vlm_LT15.npz` | Qwen3-VL 8B, layer 15 | 4096 | |
 
 A fine-tuned backbone must always use the per-fold version (not a single

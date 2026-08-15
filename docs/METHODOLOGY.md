@@ -140,7 +140,7 @@ Loss curves in `output/mlp_diagnostics/` show it's actually converging properly,
 |---|---|---|
 | CLIP frozen | `clip_features.npz` | 512 |
 | CLIP-ft (score) | `clip_ftpf_overall_v4_fold{k}.npz` | 768 |
-| Qwen3-VL 4B | `vlm4b_LT17.npz` | 2560 |
+| Qwen3-VL 4B | `vlm4b_LT15.npz` | 2560 |
 | Qwen3-VL 8B | `vlm_LT15.npz` | 4096 |
 
 A fine-tuned backbone must always use the **per-fold** version, fine-tuned

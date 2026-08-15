@@ -22,7 +22,7 @@ import numpy as np
 import pandas as pd
 
 from src.data.data import DOMAINS
-from src.utils.metrics import mean_sd, plcc, srocc, wilcoxon_paired
+from src.utils.metrics import mean_sd, plcc, sem, srocc, wilcoxon_paired
 
 #: row order (mediator, head)
 ROWS = [
@@ -44,49 +44,60 @@ REFERENCE = ("emotion", "ridge")   # row that Wilcoxon significance is computed 
 SEEDS = (0, 1, 2)
 
 
-def run_one_seed(cfg, pipeline, seed: int) -> pd.DataFrame:
+def _tag(variant: str) -> str:
+    """Results for a non-default Stage-2 variant go to their own files, so
+    variants can be compared instead of overwriting each other."""
+    return "" if variant in (None, "plain") else f"_{variant}"
+
+
+def run_one_seed(cfg, pipeline, seed: int, variant: str | None = None) -> pd.DataFrame:
     """One seed's full grid, written to its own file so seeds can run as
     separate processes in parallel (they are completely independent)."""
     out_dir = cfg.run_dir("table1")
-    print(f"[table1] seed {seed}")
+    variant = variant or cfg.stage2_variant
+    print(f"[table1] seed {seed} variant {variant}")
     d = pipeline.run_grid(
         mediators=["identity", "random", "shuffled", "pca", "emotion"],
         heads=["ridge", "mlp"],
         include_population=True,
         include_gt_upper_bound=True,
         seed=seed,
+        stage2_variant=variant,
     )
     d["seed"] = seed
-    d.to_csv(out_dir / f"per_unit_seed{seed}.csv", index=False)
-    print(f"[table1] seed {seed} written ({len(d)} rows)")
+    d["stage2_variant"] = variant
+    d.to_csv(out_dir / f"per_unit{_tag(variant)}_seed{seed}.csv", index=False)
+    print(f"[table1] seed {seed} variant {variant} written ({len(d)} rows)")
     return d
 
 
-def run(cfg, pipeline, dataset, seeds=None) -> pd.DataFrame:
+def run(cfg, pipeline, dataset, seeds=None, variant: str | None = None) -> pd.DataFrame:
     """Run the seeds that aren't on disk yet, then merge and summarize."""
     out_dir = cfg.run_dir("table1")
     seeds = list(SEEDS if seeds is None else seeds)
+    variant = variant or cfg.stage2_variant
+    tag = _tag(variant)
 
     raw = []
     for s in seeds:
-        f = out_dir / f"per_unit_seed{s}.csv"
+        f = out_dir / f"per_unit{tag}_seed{s}.csv"
         if f.exists():
             print(f"[table1] seed {s} already on disk, reusing")
             raw.append(pd.read_csv(f))
         else:
-            raw.append(run_one_seed(cfg, pipeline, s))
+            raw.append(run_one_seed(cfg, pipeline, s, variant))
 
     raw_df = pd.concat(raw, ignore_index=True)
-    raw_df.to_csv(out_dir / "per_unit_by_seed.csv", index=False)
+    raw_df.to_csv(out_dir / f"per_unit{tag}_by_seed.csv", index=False)
 
     key = ["mediator", "head", "fold", "domain", "user_id"]
     value_cols = ["ccc", "srocc", "plcc", "eff_dof"]
     df = raw_df.groupby(key, as_index=False)[value_cols].mean()
-    df.to_csv(out_dir / "per_unit.csv", index=False)
+    df.to_csv(out_dir / f"per_unit{tag}.csv", index=False)
 
     retest = test_retest(cfg, dataset)
     summary = summarize(df, retest)
-    summary.to_csv(out_dir / "summary.csv", index=False)
+    summary.to_csv(out_dir / f"summary{tag}.csv", index=False)
     print(summary.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
     return df
 
@@ -129,9 +140,11 @@ def summarize(df, retest) -> pd.DataFrame:
             for m in ("srocc", "plcc"):
                 mean, sd = mean_sd(d[m])
                 r[f"{dom}_{m}_mean"], r[f"{dom}_{m}_sd"] = mean, sd
+                r[f"{dom}_{m}_sem"] = sem(d[m])
         for m in ("srocc", "plcc"):
             mean, sd = mean_sd(s[m])
             r[f"avg_{m}_mean"], r[f"avg_{m}_sd"] = mean, sd
+            r[f"avg_{m}_sem"] = sem(s[m])
             j = s[[m]].merge(ref[[m]], left_index=True, right_index=True,
                              suffixes=("", "_ref")).dropna()
             p = (np.nan if (med, head) == REFERENCE
@@ -139,14 +152,17 @@ def summarize(df, retest) -> pd.DataFrame:
             r[f"avg_{m}_sig"] = bool(np.isfinite(p) and p < 0.05)
         rows.append(r)
 
+    # test-retest is one correlation over all pairs pooled, not an average of per-unit correlations, so there is no sd/sem across units to report
     rt = dict(mediator="test_retest", head="---", eff_dof=np.nan)
     for dom in DOMAINS:
         rt[f"{dom}_srocc_mean"] = retest[dom]["srocc"]
         rt[f"{dom}_plcc_mean"] = retest[dom]["plcc"]
         rt[f"{dom}_srocc_sd"] = rt[f"{dom}_plcc_sd"] = np.nan
+        rt[f"{dom}_srocc_sem"] = rt[f"{dom}_plcc_sem"] = np.nan
     for m in ("srocc", "plcc"):
         rt[f"avg_{m}_mean"] = retest["avg"][m]
         rt[f"avg_{m}_sd"] = np.nan
+        rt[f"avg_{m}_sem"] = np.nan
         rt[f"avg_{m}_sig"] = False
     rows.append(rt)
 
