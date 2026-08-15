@@ -67,7 +67,7 @@ def plot_panel(ax, df, metric, n_list, err, domain: str | None = None, annotate_
             ax.annotate(f"{value:.3f}", xy=(n_list[-1], value), xytext=(6, offsets[rank]),
                        textcoords="offset points", fontsize=7, color=color)
 
-def run(cfg, err: str = "sd", domain_split: bool = False):
+def run(cfg, err: str = "sem", domain_split: bool = False):
     import matplotlib.pyplot as plt
 
     setup()
@@ -79,18 +79,24 @@ def run(cfg, err: str = "sd", domain_split: bool = False):
         titles = ["Artwork", "Fashion", "Landscape"]
         # sharey too: with free y-limits fashion looks much closer to the
         # other domains than it is, which is the opposite of the point
-        fig, axes = plt.subplots(2, 3, figsize=(7.0, 3.4), sharex=True, sharey=True)
+        fig, axes = plt.subplots(2, 4, figsize=(7.0, 3.4), sharex=True, sharey=True)
         for col, (dom, title) in enumerate(zip(domains, titles)):
             plot_panel(axes[0, col], df, "srocc", n_list, err, domain=dom, annotate_crossover=True)
             axes[0, col].set_title(title, fontsize=9)
             plot_panel(axes[1, col], df, "plcc", n_list, err, domain=dom, annotate_crossover=True)
             axes[1, col].set_xlabel("ratings/user", fontsize=7.5)
+        plot_panel(axes[0, 3], df, "srocc", n_list, err, annotate_crossover=True)
+        axes[0, 3].set_title("Average", fontsize=9)
+        plot_panel(axes[1, 3], df, "plcc", n_list, err, annotate_crossover=True)
+        axes[1, 3].set_xlabel("ratings per user", fontsize=7.5)
+        
         axes[0, 0].set_ylabel("SROCC")
         axes[1, 0].set_ylabel("PLCC")
-        axes[0, 0].legend(fontsize=6.5, loc="lower right")
+        axes[1, 0].legend(fontsize=6.5, loc="lower left")
         fig.tight_layout()
         save(fig, cfg.figures_dir / f"fig_efficiency_domains_{err}")
-    else:
+    
+    else: #only average 
         fig, axes = plt.subplots(1, 2, figsize=(7.0, 2.4))
         plot_panel(axes[0], df, "srocc", n_list, err, annotate_crossover=True)
         axes[0].set_ylabel("SROCC")
@@ -109,5 +115,4 @@ if __name__ == "__main__":
     from src.config import Config
 
     cfg = Config()
-    run(cfg, "sd", domain_split=False)
-    run(cfg, "sem", domain_split=False)
+    run(cfg, "sem", domain_split=True)

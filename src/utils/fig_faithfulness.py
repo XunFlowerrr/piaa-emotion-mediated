@@ -21,7 +21,7 @@ GROUPS = DOMAINS + [None]
 XLABELS = [DOM_LABEL[d] for d in DOMAINS] + ["Average"]
 
 
-def stat(series: pd.Series, err: str) -> tuple[float, float]:
+def stat(series: pd.Series, err: str="sem") -> tuple[float, float]:
     v = series.to_numpy(float)
     v = v[np.isfinite(v)]
     m, sd = v.mean(), v.std(ddof=1)

@@ -14,6 +14,7 @@ import pandas as pd
 
 from src.data.data import CORE7, DOMAINS
 from src.modeling.heads import make_head
+from src.utils.metrics import sem
 
 #: A coefficient this small is zero for our purposes, and the sign of a zero is
 #: not a fact about anyone's taste. Ridge shrinks weak emotions all the way
@@ -58,10 +59,12 @@ def run(cfg, pipeline):
                 dd = d[d.domain == dom][col]
                 row[f"{dom}_mean"] = dd.abs().mean()
                 row[f"{dom}_sd"] = dd.abs().std()
+                row[f"{dom}_sem"] = sem(dd.abs())
                 row[f"{dom}_pct_pos"] = 100 * (dd > SIGN_TOL).mean()
             all_ = d[col]
             row["avg_mean"] = all_.abs().mean()
             row["avg_sd"] = all_.abs().std()
+            row["avg_sem"] = sem(all_.abs())
             row["avg_pct_pos"] = 100 * (all_ > SIGN_TOL).mean()
             lines.append(row)
 

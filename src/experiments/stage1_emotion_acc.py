@@ -11,7 +11,7 @@ from __future__ import annotations
 import pandas as pd
 
 from src.data.data import CORE7, DOMAINS
-from src.utils.metrics import plcc, srocc
+from src.utils.metrics import plcc, sem, srocc
 
 
 def run(cfg, pipeline):
@@ -48,12 +48,16 @@ def run(cfg, pipeline):
             dd = d[d.domain == dom]
             row[f"{dom}_srocc_mean"] = dd.srocc.mean()
             row[f"{dom}_srocc_sd"] = dd.srocc.std()
+            row[f"{dom}_srocc_sem"] = sem(dd.srocc)
             row[f"{dom}_plcc_mean"] = dd.plcc.mean()
             row[f"{dom}_plcc_sd"] = dd.plcc.std()
+            row[f"{dom}_plcc_sem"] = sem(dd.plcc)
         row["avg_srocc_mean"] = d.srocc.mean()
         row["avg_srocc_sd"] = d.srocc.std()
+        row["avg_srocc_sem"] = sem(d.srocc)
         row["avg_plcc_mean"] = d.plcc.mean()
         row["avg_plcc_sd"] = d.plcc.std()
+        row["avg_plcc_sem"] = sem(d.plcc)
         lines.append(row)
 
     summary = pd.DataFrame(lines)

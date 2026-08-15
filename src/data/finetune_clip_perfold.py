@@ -170,8 +170,8 @@ def main():
     perm = rng.permutation(len(keep))
     n_val = int(len(keep) * args.val_frac)
     va, tr = perm[:n_val].tolist(), perm[n_val:].tolist()
-    tr_loader = DataLoader(Subset(full, tr), batch_size=args.batch_size, shuffle=True, num_workers=0)
-    va_loader = DataLoader(Subset(full, va), batch_size=args.batch_size, shuffle=False, num_workers=0)
+    tr_loader = DataLoader(Subset(full, tr), batch_size=args.batch_size, shuffle=True, num_workers=4)
+    va_loader = DataLoader(Subset(full, va), batch_size=args.batch_size, shuffle=False, num_workers=4)
 
     model = CLIPRegressor(len(tgt_cols)).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
@@ -207,7 +207,7 @@ def main():
     allsid = [s for s in allsid if pth(s) is not None]
     allpaths = [pth(s) for s in allsid]
     ds = ImgDS(allsid, allpaths, np.zeros((len(allsid), len(tgt_cols)), np.float32), proc)
-    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=0)
+    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=4)
     feats = np.zeros((len(allsid), model.feat_dim), np.float32)
     model.eval()
     with torch.no_grad():

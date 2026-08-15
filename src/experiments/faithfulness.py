@@ -20,7 +20,7 @@ import pandas as pd
 from scipy.stats import spearmanr
 
 from src.data.data import CORE7, DOMAINS
-from src.utils.metrics import mean_sd, plcc, srocc, wilcoxon_paired
+from src.utils.metrics import mean_sd, plcc, sem, srocc, wilcoxon_paired
 
 N_SWAP = 5          # number of other users' formulas sampled per unit
 SWAP_SEED = 0
@@ -127,6 +127,7 @@ def summarize_ablation(b: pd.DataFrame) -> pd.DataFrame:
         for m in ("srocc", "plcc"):
             mean, sd = mean_sd(b[f"{k}_{m}"])
             r[f"{m}_mean"], r[f"{m}_sd"] = mean, sd
+            r[f"{m}_sem"] = sem(b[f"{k}_{m}"])
         rows.append(r)
     return pd.DataFrame(rows).set_index("condition")
 
@@ -138,6 +139,7 @@ def summarize_swap(b: pd.DataFrame) -> pd.DataFrame:
         for m in ("srocc", "plcc"):
             mean, sd = mean_sd(b[f"{k}_{m}"])
             r[f"{m}_mean"], r[f"{m}_sd"] = mean, sd
+            r[f"{m}_sem"] = sem(b[f"{k}_{m}"])
             if k != "own":
                 p = wilcoxon_paired(b[f"own_{m}"], b[f"{k}_{m}"])
                 r[f"{m}_sig_vs_own"] = bool(np.isfinite(p) and p < 0.05)
@@ -157,6 +159,7 @@ def summarize_align(b: pd.DataFrame) -> pd.DataFrame:
             zero = np.zeros(len(d))
             p = wilcoxon_paired(d[m], zero)
             r[f"{m}_mean"], r[f"{m}_sd"] = mean, sd
+            r[f"{m}_sem"] = sem(d[m])
             r[f"{m}_sig"] = bool(np.isfinite(p) and p < 0.05)
         rows.append(r)
     return pd.DataFrame(rows).set_index("domain")

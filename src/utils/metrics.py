@@ -64,6 +64,20 @@ def mean_sd(values) -> tuple[float, float]:
     return float(v.mean()), float(v.std(ddof=1))
 
 
+def sem(values) -> float:
+    """Standard error of the mean (sd/sqrt(n)), ignoring nan.
+
+    n is counted from `values` itself, never assumed -- tables differ in what
+    one unit is (387 user-domain units for the model tables, 5 fold-domain
+    estimates for Stage-1 accuracy)
+    """
+    v = np.asarray(values, float)
+    v = v[np.isfinite(v)]
+    if len(v) < 2:
+        return np.nan
+    return float(v.std(ddof=1) / np.sqrt(len(v)))
+
+
 def effective_dof(X, alpha: float) -> float:
     """Ridge effective degrees of freedom: tr(Z(Z'Z + alpha*I)^-1 Z').
 

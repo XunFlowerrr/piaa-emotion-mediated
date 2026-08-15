@@ -36,18 +36,34 @@ class Config:
 
     backbone: str = "clip"  #"qwen3-vl-4b", "qwen3-vl-8b"
 
-    # ridge head
-    ridge_alphas: tuple = field(default_factory=lambda: tuple(np.logspace(-2, 3, 11)))
+    # ridge head. The grid runs to 1e6, well past the point where a 7- or
+    # 512-feature head on <=100 standardized samples is fully shrunk, so the
+    # top of the grid is a safety floor the selector can actually reach rather
+    # than a cliff it is cut off before. Matters most for stage2_variant B/C,
+    # where full shrinkage lands on the population formula instead of on a
+    # constant.
+    ridge_alphas: tuple = field(default_factory=lambda: tuple(np.logspace(-2, 6, 17)))
+
+    # Stage-2 variant (how the personal head relates to the population model):
+    #   plain  ordinary ridge on the mediator, shrinks toward 0
+    #   A      append the GIAA prediction as an extra feature, so w_pop=1 with
+    #          all other weights 0 reproduces the population model exactly
+    #   B      shrink the weights toward w_pop (the pooled training-group
+    #          Stage-2 coefficients) instead of toward 0
+    #   C      fit the head on the residual y - y_pop
+    # A, B and C are all applied to every mediator including Direct, so the
+    # Table 1 comparison keeps isolating the mediator rather than the prior.
+    stage2_variant: str = "plain"
 
     # MLP head
     mlp_hidden: int = 128
     mlp_alpha: float = 0.0
     mlp_lr_grid: tuple = (1e-4, 3e-4, 1e-3, 3e-3, 1e-2)
-    mlp_max_iter: int = 2000 
-    mlp_early_stopping: bool = True
-    mlp_validation_fraction: float = 0.15
+    mlp_max_iter: int = 2000           # fixed epoch budget, stated in advance
+    mlp_early_stopping: bool = False   # no internal validation split -- see heads.py
+    mlp_validation_fraction: float = 0.15   # unused while early_stopping=False
     mlp_n_iter_no_change: int = 20
-    mlp_search_val_frac: float = 0.2   # val fraction when searching lr
+    mlp_search_val_frac: float = 0.2   # val fraction when searching lr (personal head only)
 
     mediator_width: int = 7
 

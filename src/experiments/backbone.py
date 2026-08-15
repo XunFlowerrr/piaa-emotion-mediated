@@ -12,7 +12,7 @@ import numpy as np
 import pandas as pd
 
 from src.modeling.backbones import backbone_label
-from src.utils.metrics import mean_sd, wilcoxon_paired
+from src.utils.metrics import mean_sd, sem, wilcoxon_paired
 
 
 def run(cfg, backbone_names: list[str]) -> pd.DataFrame:
@@ -50,7 +50,9 @@ def summarize(df: pd.DataFrame, names: list[str]) -> pd.DataFrame:
             hm, hsd = mean_sd(j[f"{m}_hybrid"])
             p = wilcoxon_paired(j[f"{m}_hybrid"], j[f"{m}_direct"])
             r[f"direct_{m}_mean"], r[f"direct_{m}_sd"] = dm, dsd
+            r[f"direct_{m}_sem"] = sem(j[f"{m}_direct"])
             r[f"hybrid_{m}_mean"], r[f"hybrid_{m}_sd"] = hm, hsd
+            r[f"hybrid_{m}_sem"] = sem(j[f"{m}_hybrid"])
             r[f"hybrid_{m}_best"] = bool(hm >= dm)
             r[f"hybrid_{m}_sig"] = bool(np.isfinite(p) and p < 0.05)
         rows.append(r)

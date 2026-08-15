@@ -68,6 +68,13 @@ def main(argv=None) -> int:
                     help="table1: run only these seeds, e.g. --seed 1 "
                          "(seeds are independent, so they can run in parallel; "
                          "the last one merges whatever is on disk)")
+    ap.add_argument("--stage2", default=None, choices=["plain", "A", "B", "C"],
+                    help="table1: how the personal head relates to the "
+                         "population model. plain=shrink toward 0, "
+                         "A=GIAA prediction as an extra feature, "
+                         "B=shrink toward the pooled training-group weights, "
+                         "C=fit on the residual against GIAA. Each writes its "
+                         "own summary{_A,_B,_C}.csv so they can be compared.")
     ap.add_argument("--output-dir", default=None)
     args = ap.parse_args(argv)
 
@@ -107,9 +114,9 @@ def main(argv=None) -> int:
         from src.experiments import table1
         if args.seed is not None:
             for s in (int(x) for x in str(args.seed).split(",")):
-                table1.run_one_seed(cfg, pipe, s)
+                table1.run_one_seed(cfg, pipe, s, args.stage2)
         else:
-            table1.run(cfg, pipe, ds)
+            table1.run(cfg, pipe, ds, variant=args.stage2)
     elif args.experiment == "backbone":
         from src.experiments import backbone
         backbone.run(cfg, args.backbones.split(","))

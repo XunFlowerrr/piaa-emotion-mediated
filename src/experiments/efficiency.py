@@ -13,7 +13,7 @@ import pandas as pd
 
 from src.data.data import DOMAINS
 from src.modeling.heads import make_head
-from src.utils.metrics import evaluate, mean_sd, wilcoxon_paired
+from src.utils.metrics import evaluate, mean_sd, sem, wilcoxon_paired
 
 
 def run(cfg, pipeline, n_list: list[int]) -> pd.DataFrame:
@@ -73,6 +73,7 @@ def summarize(df: pd.DataFrame, n_list: list[int]) -> pd.DataFrame:
                 mean, sd = means[m]
                 r[f"{m}_{metric}_mean"] = mean
                 r[f"{m}_{metric}_sd"] = sd
+                r[f"{m}_{metric}_sem"] = sem(piv[m][metric])
                 r[f"{m}_{metric}_best"] = bool(np.isclose(mean, top))
             r[f"hybrid_{metric}_sig_vs_direct"] = bool(np.isfinite(p) and p < 0.05)
         rows.append(r)
