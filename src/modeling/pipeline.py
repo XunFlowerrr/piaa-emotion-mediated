@@ -215,8 +215,12 @@ class Pipeline:
 
     def make_personal(self, kind: str, seed: int, variant: str, anchor=None,
                       pop_head=None):
-        """Build the personal head for the chosen Stage-2 variant."""
-        if variant in ("B", "C") and kind == "ridge":
+        """Build the personal head for the chosen Stage-2 variant.
+
+        anchor is None for mediators the variant does not apply to (the
+        content-free controls), which fall back to a plain head.
+        """
+        if variant in ("B", "C") and kind == "ridge" and anchor is not None:
             scaler, w_pop, b_pop = anchor
             return _PopAnchoredRidge(self.cfg, variant, scaler, w_pop, b_pop, pop_head)
         return make_head(kind, self.cfg, seed=seed)
@@ -316,10 +320,13 @@ class Pipeline:
                         Xg, yg, val=(Xv, yv))
                 pop_ridge = pop_models["ridge"]
 
-                # variant A rewrites every mediator, Direct included
+                # the variant reaches only the mediators listed in the config,
+                # so the content-free controls stay content-free
+                touched = set(cfg.stage2_variant_mediators)
                 if variant == "A":
                     for k in list(meds):
-                        meds[k] = _WithPopFeature(meds[k], pop_ridge)
+                        if k in touched or k == "emotion_mlp":
+                            meds[k] = _WithPopFeature(meds[k], pop_ridge)
 
                 # C needs the training-group scaler too, even though it does
                 # not use w_pop -- the correction it learns has to live in the
@@ -327,8 +334,9 @@ class Pipeline:
                 anchors = {}
                 if variant in ("B", "C"):
                     for mname in mediators:
-                        anchors[mname] = self.pop_anchor(
-                            meds[mname], Xg, yg, Xv, yv)
+                        if mname in touched:
+                            anchors[mname] = self.pop_anchor(
+                                meds[mname], Xg, yg, Xv, yv)
 
                 # freeze one personal-head hyperparameter per (mediator, head)
                 frozen = {}
