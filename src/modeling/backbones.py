@@ -76,7 +76,9 @@ class PerFoldBackbone(Backbone):
 #: backbone registry -- add new ones here, nowhere else
 BACKBONE_SPECS = {
     "clip":     dict(kind="frozen",  file="clip_features.npz",  label="CLIP frozen"),
-    "clip_ft":  dict(kind="perfold", pattern="clip_ftpf_overall_v4_fold{fold}.npz",
+    "clip_ft":  dict(kind="perfold",
+                     pattern="clip_ftpf_overall_v4_results/"
+                             "clip_ftpf_overall_v4_fold{fold}.npz",
                      label="CLIP-ft (score)"),
     "qwen4b":   dict(kind="frozen",  file="vlm4b_LT15.npz",     label="Qwen3-VL 4B"),
     "qwen8b":   dict(kind="frozen",  file="vlm_LT15.npz",       label="Qwen3-VL 8B"),

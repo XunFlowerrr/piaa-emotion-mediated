@@ -75,6 +75,11 @@ def main(argv=None) -> int:
                          "B=shrink toward the pooled training-group weights, "
                          "C=fit on the residual against GIAA. Each writes its "
                          "own summary{_A,_B,_C}.csv so they can be compared.")
+    ap.add_argument("--heads", default=None,
+                    help="table1: comma-separated heads to run, e.g. --heads mlp "
+                         "to recompute only the MLP rows. A partial run writes "
+                         "per_unit*_<h>_seed*.csv and leaves the full run's "
+                         "files untouched; merge with merge_table1.py")
     ap.add_argument("--output-dir", default=None)
     args = ap.parse_args(argv)
 
@@ -112,17 +117,26 @@ def main(argv=None) -> int:
     # --every experiment--
     if args.experiment == "table1":
         from src.experiments import table1
+        heads = args.heads.split(",") if args.heads else None
         if args.seed is not None:
             for s in (int(x) for x in str(args.seed).split(",")):
-                table1.run_one_seed(cfg, pipe, s, args.stage2)
+                table1.run_one_seed(cfg, pipe, s, args.stage2, heads)
+        elif heads is not None:
+            for s in table1.SEEDS:
+                table1.run_one_seed(cfg, pipe, s, args.stage2, heads)
         else:
             table1.run(cfg, pipe, ds, variant=args.stage2)
     elif args.experiment == "backbone":
         from src.experiments import backbone
-        backbone.run(cfg, args.backbones.split(","))
+        backbone.run(cfg, args.backbones.split(","), variant=args.stage2,
+                     heads=args.heads.split(",") if args.heads else None)
     elif args.experiment == "efficiency":
         from src.experiments import efficiency
-        efficiency.run(cfg, pipe, [int(x) for x in args.n_train.split(",")])
+        efficiency.run(cfg, pipe, [int(x) for x in args.n_train.split(",")],
+                       variant=args.stage2,
+                       heads=args.heads.split(",") if args.heads else None,
+                       seeds=([int(x) for x in str(args.seed).split(",")]
+                              if args.seed is not None else (0,)))
     elif args.experiment == "faithfulness":
         from src.experiments import faithfulness
         faithfulness.run(cfg, pipe)

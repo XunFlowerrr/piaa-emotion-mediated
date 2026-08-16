@@ -21,8 +21,9 @@ import pandas as pd
 
 from src.data.data import CORE7, DOMAINS, XpassDataset
 from src.data.splits import V4Split, per_user_split, user_rng
-from src.modeling.heads import ALPHA_TIE_RTOL, make_head
-from src.modeling.mediators import build_shared_mediators, fit_emotion_mlp
+from src.modeling.heads import (ALPHA_HEADS, ALPHA_TIE_RTOL, head_grid,
+                                make_head)
+from src.modeling.mediators import build_shared_mediators
 from src.utils.metrics import evaluate, srocc
 
 
@@ -76,8 +77,9 @@ class _PopAnchoredRidge:
 
     is_linear = True
 
-    def __init__(self, cfg, mode: str, scaler, w_pop, b_pop, pop_head=None):
-        self.cfg, self.mode = cfg, mode
+    def __init__(self, cfg, mode: str, scaler, w_pop, b_pop, pop_head=None,
+                 kind: str = "ridge"):
+        self.cfg, self.mode, self.kind = cfg, mode, kind
         self.scaler, self.w_pop, self.b_pop = scaler, w_pop, b_pop
         self.pop_head = pop_head
         self._delta = None
@@ -85,8 +87,20 @@ class _PopAnchoredRidge:
         self._Z_train = None
         self._alpha = np.nan
 
+    def _resid_model(self, alpha):
+        """The regressor that learns the personal correction. Same family as
+        the head being anchored, so 'lasso anchored on GIAA' really is a lasso
+        on the residual rather than a ridge wearing its name."""
+        from sklearn.linear_model import ElasticNet, Lasso, Ridge
+        if self.kind == "lasso":
+            return Lasso(alpha=float(alpha), max_iter=self.cfg.sparse_max_iter)
+        if self.kind == "elastic":
+            return ElasticNet(alpha=float(alpha),
+                              l1_ratio=self.cfg.elastic_l1_ratio,
+                              max_iter=self.cfg.sparse_max_iter)
+        return Ridge(alpha=float(alpha))
+
     def fit(self, M, y, X_raw=None, frozen_alpha=None, **_):
-        from sklearn.linear_model import Ridge, RidgeCV
         Z = self.scaler.transform(np.asarray(M, float))
         y = np.asarray(y, float)
 
@@ -96,11 +110,14 @@ class _PopAnchoredRidge:
             resid = y - np.asarray(self.pop_head.predict(X_raw), float)
 
         if frozen_alpha is not None:
-            r = Ridge(alpha=float(frozen_alpha)).fit(Z, resid)
-            self._alpha = float(frozen_alpha)
+            alpha = float(frozen_alpha)
         else:
-            r = RidgeCV(alphas=np.asarray(self.cfg.ridge_alphas, float)).fit(Z, resid)
-            self._alpha = float(r.alpha_)
+            # no frozen value (ad-hoc use): fall back to the strongest penalty
+            # in the grid rather than silently choosing on this user's own data
+            from src.modeling.heads import head_grid
+            alpha = float(np.max(np.asarray(head_grid(self.kind, self.cfg), float)))
+        r = self._resid_model(alpha).fit(Z, resid)
+        self._alpha = alpha
         self._delta, self._b = r.coef_.ravel(), float(r.intercept_)
         self._Z_train = Z
         return self
@@ -173,25 +190,28 @@ class Pipeline:
                 g[CORE7].to_numpy(float),
                 g["overall"].to_numpy(float))
 
-    def shared_context(self, fold, domain: str, feats, with_emotion_mlp: bool = False,
-                       seed: int = 0):
+    def shared_context(self, fold, domain: str, feats,
+                       seed: int = 0, want: list[str] | None = None):
         """Population-level data for this fold/domain, plus fitted mediators.
 
         Every shared component built here has its hyperparameter selected on
         the validation user group (disjoint from train and test users), never
         on train-group data alone and never on anything a test user touched.
+        Stage-1 (mediator) fitting is always ridge, regardless of which
+        Stage-2 head is being tested, so the ridge-vs-mlp comparison isolates
+        the head and doesn't also swap the mediator's own fitting procedure.
 
         seed  run-level seed for multi-seed averaging; seed=0 keeps the
               original RNG draws exactly.
         """
         Xg, Eg, yg = self.group_data(fold.train_users, domain, feats)
-        val_E = self.val_data(fold, domain, feats)[:2]   # (X_val, E_val)
+        Xv, Ev, yv = self.val_data(fold, domain, feats)
+        val_E = (Xv, Ev)
+        val_E8 = (Xv, np.column_stack([Ev, yv]))    # for the K+1-wide controls
 
-        emo_seed = fold.index if seed == 0 else fold.index + seed * 1_000_003
-        emo_mlp = (fit_emotion_mlp(Xg, Eg, self.cfg, seed=emo_seed, val=val_E)
-                   if with_emotion_mlp else None)
         meds = build_shared_mediators(Xg, Eg, self.cfg, fold.index,
-                                      emotion_mlp=emo_mlp, seed=seed, val=val_E)
+                                      want=want, seed=seed,
+                                      val=val_E, yg=yg, val8=val_E8)
         return Xg, Eg, yg, meds
 
     def val_data(self, fold, domain: str, feats):
@@ -220,9 +240,11 @@ class Pipeline:
         anchor is None for mediators the variant does not apply to (the
         content-free controls), which fall back to a plain head.
         """
-        if variant in ("B", "C") and kind == "ridge" and anchor is not None:
+        if variant in ("B", "C") and kind in ALPHA_HEADS and anchor is not None:
             scaler, w_pop, b_pop = anchor
-            return _PopAnchoredRidge(self.cfg, variant, scaler, w_pop, b_pop, pop_head)
+            return _PopAnchoredRidge(self.cfg, variant, scaler, w_pop, b_pop,
+                                     pop_head, kind=kind)
+        # the MLP has no anchored form, so under B/C it trains as a plain head
         return make_head(kind, self.cfg, seed=seed)
 
     def select_personal_hyperparam(self, fold, domain: str, feats, med, kind: str,
@@ -243,7 +265,7 @@ class Pipeline:
         kind  "ridge" or "mlp"
         """
         cfg = self.cfg
-        grid = cfg.ridge_alphas if kind == "ridge" else cfg.mlp_lr_grid
+        grid = head_grid(kind, cfg)
         scores = {float(c): [] for c in grid}
 
         for unit in self.iter_units(fold, domain, feats, n_train=n_train,
@@ -256,7 +278,7 @@ class Pipeline:
                     h.fit(M_tr, unit.y_train, X_raw=unit.X_train,
                           frozen_alpha=float(c))
                     p = h.predict(M_ev, X_raw=unit.X_eval)
-                elif kind == "ridge":
+                elif kind in ALPHA_HEADS:
                     p = h.fit(M_tr, unit.y_train, frozen_alpha=float(c)).predict(M_ev)
                 else:
                     p = h.fit(M_tr, unit.y_train, frozen_lr=float(c)).predict(M_ev)
@@ -265,9 +287,9 @@ class Pipeline:
         means = {c: (np.mean(v) if v else -np.inf) for c, v in scores.items()}
         best = max(means.values())
         tied = [c for c, s in means.items() if s >= best - abs(best) * ALPHA_TIE_RTOL]
-        # same tie-break direction as select_alpha_on_val: strongest ridge
-        # penalty, smallest MLP step (grids are both ascending)
-        return max(tied) if kind == "ridge" else min(tied)
+        # same tie-break direction as select_alpha_on_val: strongest penalty,
+        # smallest MLP step (grids are both ascending)
+        return max(tied) if kind in ALPHA_HEADS else min(tied)
 
     def run_grid(self, mediators: list[str], heads: list[str],
                  n_train: int | None = None, include_population: bool = True,
@@ -298,14 +320,16 @@ class Pipeline:
         cfg = self.cfg
         domains = domains or DOMAINS
         variant = stage2_variant or cfg.stage2_variant
-        need_mlp_mediator = "mlp" in heads and "emotion" in mediators
         rows = []
 
         for fold in self.split.folds():
             feats = self.backbone.features_for_fold(fold.index)
             for dom in domains:
+                want = list(dict.fromkeys(
+                    list(mediators) + ["identity", "emotion", "pca", "random",
+                                       "shuffled"]))
                 Xg, Eg, yg, meds = self.shared_context(
-                    fold, dom, feats, with_emotion_mlp=need_mlp_mediator, seed=seed)
+                    fold, dom, feats, seed=seed, want=want)
                 n = n_train or cfg.n_train
 
                 # GIAA head. Always fit: it is the population baseline row and
@@ -325,7 +349,7 @@ class Pipeline:
                 touched = set(cfg.stage2_variant_mediators)
                 if variant == "A":
                     for k in list(meds):
-                        if k in touched or k == "emotion_mlp":
+                        if k in touched:
                             meds[k] = _WithPopFeature(meds[k], pop_ridge)
 
                 # C needs the training-group scaler too, even though it does
@@ -342,11 +366,8 @@ class Pipeline:
                 frozen = {}
                 for mname in mediators:
                     for h in heads:
-                        key = ("emotion_mlp" if (mname == "emotion" and h == "mlp"
-                                                 and "emotion_mlp" in meds)
-                               else mname)
                         frozen[(mname, h)] = self.select_personal_hyperparam(
-                            fold, dom, feats, meds[key], h, n, variant,
+                            fold, dom, feats, meds[mname], h, n, variant,
                             anchors.get(mname), pop_ridge)
 
                 for unit in self.iter_units(fold, dom, feats, n_train=n_train):
@@ -361,11 +382,7 @@ class Pipeline:
                                          **evaluate(unit.y_eval, p)})
 
                         for mname in mediators:
-                            # with head=mlp, the emotion mediator is also an MLP
-                            key = ("emotion_mlp" if (mname == "emotion" and h == "mlp"
-                                                     and "emotion_mlp" in meds)
-                                   else mname)
-                            med = meds[key]
+                            med = meds[mname]
                             M_tr = med.transform(unit.X_train)
                             M_ev = med.transform(unit.X_eval)
                             hseed = (unit.user_id if seed == 0
@@ -377,7 +394,7 @@ class Pipeline:
                                 head.fit(M_tr, unit.y_train, X_raw=unit.X_train,
                                          frozen_alpha=fval)
                                 p = head.predict(M_ev, X_raw=unit.X_eval)
-                            elif h == "ridge":
+                            elif h in ALPHA_HEADS:
                                 p = head.fit(M_tr, unit.y_train,
                                              frozen_alpha=fval).predict(M_ev)
                             else:

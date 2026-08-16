@@ -115,13 +115,18 @@ class ShuffledMediator(Mediator):
 
 def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
                            want: list[str] | None = None,
-                           emotion_mlp=None, seed: int = 0,
-                           val: tuple | None = None) -> dict[str, Mediator]:
+                           seed: int = 0,
+                           val: tuple | None = None,
+                           yg: np.ndarray | None = None,
+                           val8: tuple | None = None) -> dict[str, Mediator]:
     """Build every mediator from train-user data (population-level images).
+
+    Every mediator is fit by ridge (Stage-1 is always linear, regardless of
+    which Stage-2 head is later tested against it) so the ridge-vs-mlp rows
+    in Table 1 differ only in the head, not in how the mediator was fit.
 
     Xg  features of images train users rated (n_img, d)
     Eg  population-mean emotion ratings for those images (n_img, 7)
-    emotion_mlp  if given, adds an "emotion_mlp" mediator (used with head=mlp)
     seed  run-level seed for multi-seed averaging (random/shuffled are
           stochastic); seed=0 reproduces the original RNG exactly.
     val  (X_val, E_val) from the held-out validation user group; the ridge
@@ -134,11 +139,18 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
     K = cfg.mediator_width
     want = want or ["identity", "emotion", "pca", "random", "shuffled"]
 
-    # fixed RNG order: R first, then the permutation -- don't reorder
+    # fixed RNG order: R first, then the permutation -- don't reorder.
+    # The width-matched controls need a K+1-wide projection, but drawing one
+    # here would shift every value after the first row (a (d,K+1) draw sliced
+    # to K is NOT a (d,K) draw -- the generator fills row-major), which would
+    # silently move the published random and shuffled numbers. The extra
+    # column is therefore drawn last, after everything that already existed.
     rng_seed = fold_index if seed == 0 else fold_index + seed * 1_000_003
     rng = np.random.default_rng(rng_seed)
     R = rng.standard_normal((Xg.shape[1], K)) / np.sqrt(Xg.shape[1])
     perm = rng.permutation(len(Eg))
+    R_extra = rng.standard_normal((Xg.shape[1], 1)) / np.sqrt(Xg.shape[1])
+    R_full = np.hstack([R, R_extra])
 
     out: dict[str, Mediator] = {}
     if "identity" in want:
@@ -153,17 +165,23 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
     if "shuffled" in want:
         out["shuffled"] = ShuffledMediator(
             _shared_ridge(Xg, Eg[perm], cfg.ridge_alphas, val))
-    if emotion_mlp is not None:
-        out["emotion_mlp"] = EmotionMediator(emotion_mlp)
+
+    # --- width-matched controls -------------------------------------------
+    # Variant A gives Hybrid an 8th feature (the GIAA prediction), so a K-wide
+    # control is no longer the same shape as the thing it is controlling for.
+    # These are K+1 wide and carry no population prediction, which separates
+    # "the extra width helped" from "the GIAA prediction helped".
+    if "pca8" in want:
+        out["pca8"] = PCAMediator(PCA(n_components=K + 1, random_state=0).fit(Xg))
+    if "random8" in want:
+        out["random8"] = RandomMediator(R_full)
+    if "shuffled8" in want:
+        # shuffle the [emotions, mean score] block together, so all K+1
+        # outputs are real-looking values attached to the wrong images
+        if yg is None:
+            raise ValueError("shuffled8 needs yg (population mean score)")
+        target = np.column_stack([Eg, np.asarray(yg, float)])
+        out["shuffled8"] = ShuffledMediator(
+            _shared_ridge(Xg, target[perm], cfg.ridge_alphas, val8))
+
     return out
-
-
-def fit_emotion_mlp(Xg: np.ndarray, Eg: np.ndarray, cfg, seed: int, val=None):
-    """Nonlinear emotion mediator (used when the whole pipeline is MLP).
-
-    Reuses MLPHead so the training recipe matches the head exactly (128
-    hidden, MSE, no L2). It is a shared component, so its learning rate is
-    picked on the validation user group when one is passed.
-    """
-    from src.modeling.heads import MLPHead
-    return MLPHead(cfg, seed=seed).fit(Xg, Eg, val=val)

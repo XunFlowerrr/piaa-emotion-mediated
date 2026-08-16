@@ -1,80 +1,106 @@
 """How much does the mediator help when a user has few ratings?
 
-Sweeps support size n (10/25/50/100) against a fixed eval set, so results
-are comparable across budgets. Compares Pop-zero (population formula, no
-personal data), Direct, and Hybrid.
+Sweeps support size n (10/25/50/100) against a fixed eval set, so results are
+comparable across budgets, and reports every mediator against the population
+(GIAA) baseline.
 
-Output: output/efficiency/per_unit.csv, summary.csv
+The sweep runs through Pipeline.run_grid, the same code path as Table 1, so
+one n is exactly a Table 1 run at a different support size: the personal
+hyperparameter is frozen per (fold, domain, mediator, head, n) on the
+validation user group, and the population row is the real GIAA head on raw
+features rather than a population formula read off the mediator. An earlier
+version of this file fitted heads with per-user RidgeCV and called the
+population formula on the emotion mediator "pop_zero"; neither matched Table
+1, so the two tables could not be read against each other.
+
+`--stage2 B/C` anchors the personal head on GIAA, which is the interesting
+case here: it asks at what support size a personalized model stops losing to
+the population model.
+
+Output: output/efficiency/per_unit{tag}.csv, summary{tag}.csv
 """
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
 
-from src.data.data import DOMAINS
-from src.modeling.heads import make_head
-from src.utils.metrics import evaluate, mean_sd, sem, wilcoxon_paired
+from src.utils.metrics import mean_sd, sem, wilcoxon_paired
+
+#: mediators the sweep reports. Population is added by run_grid.
+MEDIATORS = ["identity", "pca", "emotion"]
+REFERENCE = "population"     # what every row is tested against
 
 
-def run(cfg, pipeline, n_list: list[int]) -> pd.DataFrame:
+def _tag(variant, heads) -> str:
+    v = "" if variant in (None, "plain") else f"_{variant}"
+    h = "" if list(heads) == ["ridge"] else "_" + "".join(x[0] for x in heads)
+    return v + h
+
+
+def run(cfg, pipeline, n_list: list[int], variant: str | None = None,
+        heads=None, mediators=None, seeds=(0,)) -> pd.DataFrame:
     out_dir = cfg.run_dir("efficiency")
-    rows = []
-    for fold in pipeline.split.folds():
-        feats = pipeline.backbone.features_for_fold(fold.index)
-        for dom in DOMAINS:
-            Xg, Eg, yg, meds = pipeline.shared_context(fold, dom, feats)
-            emotion = meds["emotion"]
-            # population-level formula on the emotion mediator (Pop-zero).
-            # shared component -> penalty selected on the val user group
-            Xv, _, yv = pipeline.val_data(fold, dom, feats)
-            popform = make_head("ridge", cfg).fit(
-                emotion.transform(Xg), yg, val=(emotion.transform(Xv), yv))
+    variant = variant or cfg.stage2_variant
+    heads = list(heads or ["ridge"])
+    mediators = list(mediators or MEDIATORS)
+    tag = _tag(variant, heads)
 
-            for n in n_list:
-                for unit in pipeline.iter_units(fold, dom, feats, n_train=n):
-                    base = dict(n_train=n, fold=unit.fold, domain=unit.domain,
-                                user_id=unit.user_id)
-                    M_tr = emotion.transform(unit.X_train)
-                    M_ev = emotion.transform(unit.X_eval)
+    frames = []
+    for n in n_list:
+        for seed in seeds:
+            print(f"[efficiency] n={n} seed={seed} variant={variant} heads={heads}",
+                  flush=True)
+            d = pipeline.run_grid(
+                mediators=mediators, heads=heads, n_train=n,
+                include_population=True, include_gt_upper_bound=False,
+                seed=seed, stage2_variant=variant)
+            d["n_train"], d["seed"], d["stage2_variant"] = n, seed, variant
+            frames.append(d)
 
-                    hy = make_head("ridge", cfg).fit(M_tr, unit.y_train)
-                    di = make_head("ridge", cfg).fit(unit.X_train, unit.y_train)
-                    rows.append({**base, "model": "pop_zero",
-                                 **evaluate(unit.y_eval, popform.predict(M_ev))})
-                    rows.append({**base, "model": "direct",
-                                 **evaluate(unit.y_eval, di.predict(unit.X_eval))})
-                    rows.append({**base, "model": "hybrid",
-                                 **evaluate(unit.y_eval, hy.predict(M_ev))})
-        print(f"  fold {fold.index} done ({len(rows)} rows)", flush=True)
+    raw = pd.concat(frames, ignore_index=True)
+    raw.to_csv(out_dir / f"per_unit{tag}_by_seed.csv", index=False)
 
-    df = pd.DataFrame(rows)
-    df.to_csv(out_dir / "per_unit.csv", index=False)
+    key = ["n_train", "mediator", "head", "fold", "domain", "user_id"]
+    df = raw.groupby(key, as_index=False)[["ccc", "srocc", "plcc", "eff_dof"]].mean()
+    df.to_csv(out_dir / f"per_unit{tag}.csv", index=False)
+
     summary = summarize(df, n_list)
-    summary.to_csv(out_dir / "summary.csv", index=False)
-    print(summary.to_string(index=False, float_format=lambda x: f"{x:.4f}"))
+    summary.to_csv(out_dir / f"summary{tag}.csv", index=False)
+    cols = [c for c in summary.columns
+            if c in ("n_train", "mediator", "head", "n")
+            or c.endswith(("srocc_mean", "srocc_sig_vs_pop", "srocc_beats_pop"))]
+    print(summary[cols].to_string(index=False, float_format=lambda x: f"{x:.4f}"))
     return df
 
 
 def summarize(df: pd.DataFrame, n_list: list[int]) -> pd.DataFrame:
+    """One row per (n, mediator, head), each tested against the population
+    baseline at that same n on the units both scored."""
     rows = []
     for n in n_list:
         d = df[df.n_train == n]
-        piv = {m: d[d.model == m].set_index(["fold", "domain", "user_id"])
-               for m in ("pop_zero", "direct", "hybrid")}
-        r = dict(n_train=n)
-        for metric in ("srocc", "plcc"):
-            means = {m: mean_sd(piv[m][metric]) for m in piv}
-            top = max(v[0] for v in means.values() if np.isfinite(v[0]))
-            j = piv["hybrid"][[metric]].merge(
-                piv["direct"][[metric]], left_index=True, right_index=True,
-                suffixes=("_h", "_d")).dropna()
-            p = wilcoxon_paired(j[f"{metric}_h"], j[f"{metric}_d"])
-            for m in ("pop_zero", "direct", "hybrid"):
-                mean, sd = means[m]
-                r[f"{m}_{metric}_mean"] = mean
-                r[f"{m}_{metric}_sd"] = sd
-                r[f"{m}_{metric}_sem"] = sem(piv[m][metric])
-                r[f"{m}_{metric}_best"] = bool(np.isclose(mean, top))
-            r[f"hybrid_{metric}_sig_vs_direct"] = bool(np.isfinite(p) and p < 0.05)
-        rows.append(r)
+        if d.empty:
+            continue
+        for head in sorted(d["head"].unique()):
+            dh = d[d["head"] == head]
+            ref = dh[dh.mediator == REFERENCE].set_index(
+                ["fold", "domain", "user_id"])
+            for med in sorted(dh.mediator.unique()):
+                s = dh[dh.mediator == med].set_index(["fold", "domain", "user_id"])
+                r = dict(n_train=n, mediator=med, head=head, n=len(s),
+                         eff_dof=s["eff_dof"].mean())
+                for m in ("srocc", "plcc"):
+                    mean, sd = mean_sd(s[m])
+                    r[f"{m}_mean"], r[f"{m}_sd"] = mean, sd
+                    r[f"{m}_sem"] = sem(s[m])
+                    j = s[[m]].merge(ref[[m]], left_index=True, right_index=True,
+                                     suffixes=("", "_pop")).dropna()
+                    p = (np.nan if med == REFERENCE
+                         else wilcoxon_paired(j[m], j[f"{m}_pop"]))
+                    # the question Hayashi asks: does personalization beat the
+                    # population model at this support size, and is it real?
+                    r[f"{m}_beats_pop"] = bool(len(j) and
+                                               j[m].mean() > j[f"{m}_pop"].mean())
+                    r[f"{m}_sig_vs_pop"] = bool(np.isfinite(p) and p < 0.05)
+                rows.append(r)
     return pd.DataFrame(rows)

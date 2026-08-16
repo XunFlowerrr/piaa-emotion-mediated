@@ -1,0 +1,26 @@
+\begin{tabular}{ll cc cc cc cc}
+\toprule
+
+\multirow{2}{*}{Backbone} & \multirow{2}{*}{Mediator} & 
+\multicolumn{2}{c}{Artwork} & \multicolumn{2}{c}{Fashion} &
+\multicolumn{2}{c}{Landscape} & \multicolumn{2}{c}{Average} \\
+\cmidrule(lr){3-4} \cmidrule(lr){5-6} \cmidrule(lr){7-8} \cmidrule(lr){9-10}
+ & & SROCC & PLCC & SROCC & PLCC & SROCC & PLCC & SROCC & PLCC \\
+\midrule
+\multirow{2}{*}{CLIP frozen} 
+ & Direct & $\bm{.488_{\pm .014}}$ & $\bm{.496_{\pm .014}}$ & $.304_{\pm .015}$ & $.319_{\pm .015}$ & $.411_{\pm .018}^\dagger$ & $.419_{\pm .018}^\dagger$ & $.401_{\pm .010}^\dagger$ & $.411_{\pm .010}^\dagger$ \\
+ & Hybrid & $.480_{\pm .015}$ & $.486_{\pm .015}$ & $\bm{.318_{\pm .015}}$ & $\bm{.334_{\pm .014}}$ & $\bm{.463_{\pm .015}}$ & $\bm{.468_{\pm .015}}$ & $\bm{.420_{\pm .009}}$ & $\bm{.430_{\pm .009}}$ \\
+\addlinespace
+\multirow{2}{*}{CLIP-ft (score)} 
+ & Direct & $\bm{.515_{\pm .014}}^\dagger$ & $\bm{.524_{\pm .014}}^\dagger$ & $\bm{.356_{\pm .014}}^\dagger$ & $\bm{.364_{\pm .014}}^\dagger$ & $\bm{.470_{\pm .016}}$ & $\bm{.472_{\pm .016}}$ & $\bm{.447_{\pm .009}}^\dagger$ & $\bm{.453_{\pm .009}}^\dagger$ \\
+ & Hybrid & $.478_{\pm .015}$ & $.485_{\pm .015}$ & $.337_{\pm .014}$ & $.344_{\pm .013}$ & $.462_{\pm .015}$ & $.464_{\pm .015}$ & $.425_{\pm .009}$ & $.431_{\pm .009}$ \\
+\addlinespace
+\multirow{2}{*}{Qwen3-VL 4B} 
+ & Direct & $.480_{\pm .014}$ & $.489_{\pm .014}$ & $.317_{\pm .016}^\dagger$ & $.333_{\pm .015}^\dagger$ & $.448_{\pm .016}$ & $.455_{\pm .016}^\dagger$ & $.415_{\pm .009}^\dagger$ & $.425_{\pm .009}^\dagger$ \\
+ & Hybrid & $\bm{.488_{\pm .015}}$ & $\bm{.493_{\pm .015}}$ & $\bm{.350_{\pm .014}}$ & $\bm{.366_{\pm .014}}$ & $\bm{.469_{\pm .014}}$ & $\bm{.477_{\pm .014}}$ & $\bm{.436_{\pm .009}}$ & $\bm{.445_{\pm .009}}$ \\
+\addlinespace
+\multirow{2}{*}{Qwen3-VL 8B} 
+ & Direct & $\bm{.496_{\pm .014}}$ & $\bm{.501_{\pm .014}}$ & $.330_{\pm .016}^\dagger$ & $.350_{\pm .015}^\dagger$ & $.455_{\pm .016}^\dagger$ & $.463_{\pm .016}^\dagger$ & $.427_{\pm .009}^\dagger$ & $.438_{\pm .009}^\dagger$ \\
+ & Hybrid & $.491_{\pm .014}$ & $.495_{\pm .014}$ & $\bm{.368_{\pm .014}}$ & $\bm{.381_{\pm .014}}$ & $\bm{.480_{\pm .015}}$ & $\bm{.487_{\pm .015}}$ & $\bm{.446_{\pm .009}}$ & $\bm{.455_{\pm .009}}$ \\
+\bottomrule
+\end{tabular}

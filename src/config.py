@@ -44,6 +44,15 @@ class Config:
     # constant.
     ridge_alphas: tuple = field(default_factory=lambda: tuple(np.logspace(-2, 6, 17)))
 
+    # Lasso / ElasticNet personal heads. Their penalty is on a different scale
+    # from ridge's: with standardized features the smallest alpha that zeroes
+    # every coefficient is order 1, so the grid runs from far below any useful
+    # penalty up past full sparsity. Same tie-break rule as ridge (strongest
+    # penalty wins a tie), which here means the sparsest model.
+    sparse_alphas: tuple = field(default_factory=lambda: tuple(np.logspace(-4, 1, 17)))
+    elastic_l1_ratio: float = 0.5
+    sparse_max_iter: int = 5000
+
     # Stage-2 variant (how the personal head relates to the population model):
     #   plain  ordinary ridge on the mediator, shrinks toward 0
     #   A      append the GIAA prediction as an extra feature, so w_pop=1 with
@@ -89,7 +98,10 @@ class Config:
             if isinstance(v, Path):
                 d[k] = str(v)
             elif isinstance(v, tuple):
-                d[k] = [float(x) for x in v]
+                # numeric grids dump as floats; name lists (e.g.
+                # stage2_variant_mediators) dump as-is
+                d[k] = [float(x) if isinstance(x, (int, float)) else x
+                        for x in v]
             else:
                 d[k] = v
         path.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")

@@ -50,24 +50,39 @@ def _tag(variant: str) -> str:
     return "" if variant in (None, "plain") else f"_{variant}"
 
 
-def run_one_seed(cfg, pipeline, seed: int, variant: str | None = None) -> pd.DataFrame:
+HEADS = ["ridge", "mlp"]
+
+
+def _htag(heads) -> str:
+    """A partial-head run goes to its own file so it cannot overwrite a full
+    run's results (which hold the rows it is not recomputing)."""
+    return "" if list(heads) == HEADS else "_" + "".join(h[0] for h in heads)
+
+
+def run_one_seed(cfg, pipeline, seed: int, variant: str | None = None,
+                 heads=None) -> pd.DataFrame:
     """One seed's full grid, written to its own file so seeds can run as
     separate processes in parallel (they are completely independent)."""
     out_dir = cfg.run_dir("table1")
     variant = variant or cfg.stage2_variant
-    print(f"[table1] seed {seed} variant {variant}")
+    heads = list(heads or HEADS)
+    print(f"[table1] seed {seed} variant {variant} heads {heads}")
     d = pipeline.run_grid(
         mediators=["identity", "random", "shuffled", "pca", "emotion"],
-        heads=["ridge", "mlp"],
+        heads=heads,
         include_population=True,
-        include_gt_upper_bound=True,
+        # the ceiling is a ridge-only row; a heads=mlp run would not produce
+        # it, and asking for it anyway would write a duplicate of a row the
+        # full run already has
+        include_gt_upper_bound=("ridge" in heads),
         seed=seed,
         stage2_variant=variant,
     )
     d["seed"] = seed
     d["stage2_variant"] = variant
-    d.to_csv(out_dir / f"per_unit{_tag(variant)}_seed{seed}.csv", index=False)
-    print(f"[table1] seed {seed} variant {variant} written ({len(d)} rows)")
+    f = out_dir / f"per_unit{_tag(variant)}{_htag(heads)}_seed{seed}.csv"
+    d.to_csv(f, index=False)
+    print(f"[table1] seed {seed} variant {variant} written ({len(d)} rows) -> {f.name}")
     return d
 
 
