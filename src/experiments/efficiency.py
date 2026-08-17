@@ -31,19 +31,24 @@ MEDIATORS = ["identity", "pca", "emotion"]
 REFERENCE = "population"     # what every row is tested against
 
 
-def _tag(variant, heads) -> str:
+def _tag(variant, heads, mediators, backbone) -> str:
+    """Distinct filename per configuration. Everything that changes the
+    numbers is in the name, so parallel runs cannot overwrite one another and
+    a file can be traced back to the command that made it."""
     v = "" if variant in (None, "plain") else f"_{variant}"
     h = "" if list(heads) == ["ridge"] else "_" + "".join(x[0] for x in heads)
-    return v + h
+    b = "" if backbone in (None, "clip") else f"_{backbone}"
+    m = "" if list(mediators) == MEDIATORS else "_m" + str(len(mediators))
+    return v + h + b + m
 
 
 def run(cfg, pipeline, n_list: list[int], variant: str | None = None,
-        heads=None, mediators=None, seeds=(0,)) -> pd.DataFrame:
+        heads=None, mediators=None, seeds=(0,), backbone=None) -> pd.DataFrame:
     out_dir = cfg.run_dir("efficiency")
     variant = variant or cfg.stage2_variant
     heads = list(heads or ["ridge"])
     mediators = list(mediators or MEDIATORS)
-    tag = _tag(variant, heads)
+    tag = _tag(variant, heads, mediators, backbone or cfg.backbone)
 
     frames = []
     for n in n_list:

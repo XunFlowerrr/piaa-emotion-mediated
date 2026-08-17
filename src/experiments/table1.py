@@ -59,16 +59,24 @@ def _htag(heads) -> str:
     return "" if list(heads) == HEADS else "_" + "".join(h[0] for h in heads)
 
 
+MEDIATORS = ["identity", "random", "shuffled", "pca", "emotion"]
+
+
+def _mtag(mediators) -> str:
+    return "" if list(mediators) == MEDIATORS else "_m" + str(len(mediators))
+
+
 def run_one_seed(cfg, pipeline, seed: int, variant: str | None = None,
-                 heads=None) -> pd.DataFrame:
+                 heads=None, mediators=None) -> pd.DataFrame:
     """One seed's full grid, written to its own file so seeds can run as
     separate processes in parallel (they are completely independent)."""
     out_dir = cfg.run_dir("table1")
     variant = variant or cfg.stage2_variant
     heads = list(heads or HEADS)
-    print(f"[table1] seed {seed} variant {variant} heads {heads}")
+    mediators = list(mediators or MEDIATORS)
+    print(f"[table1] seed {seed} variant {variant} heads {heads} meds {mediators}")
     d = pipeline.run_grid(
-        mediators=["identity", "random", "shuffled", "pca", "emotion"],
+        mediators=mediators,
         heads=heads,
         include_population=True,
         # the ceiling is a ridge-only row; a heads=mlp run would not produce
@@ -80,7 +88,8 @@ def run_one_seed(cfg, pipeline, seed: int, variant: str | None = None,
     )
     d["seed"] = seed
     d["stage2_variant"] = variant
-    f = out_dir / f"per_unit{_tag(variant)}{_htag(heads)}_seed{seed}.csv"
+    f = (out_dir /
+         f"per_unit{_tag(variant)}{_htag(heads)}{_mtag(mediators)}_seed{seed}.csv")
     d.to_csv(f, index=False)
     print(f"[table1] seed {seed} variant {variant} written ({len(d)} rows) -> {f.name}")
     return d

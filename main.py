@@ -75,6 +75,11 @@ def main(argv=None) -> int:
                          "B=shrink toward the pooled training-group weights, "
                          "C=fit on the residual against GIAA. Each writes its "
                          "own summary{_A,_B,_C}.csv so they can be compared.")
+    ap.add_argument("--mediators", default=None,
+                    help="table1/efficiency: comma-separated mediators, e.g. "
+                         "--mediators emotion,emotion_sd,emotion_hist. "
+                         "emotion_sd (14 wide) and emotion_hist (35 wide) are "
+                         "the distribution-valued Stage-1 variants.")
     ap.add_argument("--heads", default=None,
                     help="table1: comma-separated heads to run, e.g. --heads mlp "
                          "to recompute only the MLP rows. A partial run writes "
@@ -118,12 +123,13 @@ def main(argv=None) -> int:
     if args.experiment == "table1":
         from src.experiments import table1
         heads = args.heads.split(",") if args.heads else None
+        meds = args.mediators.split(",") if args.mediators else None
         if args.seed is not None:
             for s in (int(x) for x in str(args.seed).split(",")):
-                table1.run_one_seed(cfg, pipe, s, args.stage2, heads)
-        elif heads is not None:
+                table1.run_one_seed(cfg, pipe, s, args.stage2, heads, meds)
+        elif heads is not None or meds is not None:
             for s in table1.SEEDS:
-                table1.run_one_seed(cfg, pipe, s, args.stage2, heads)
+                table1.run_one_seed(cfg, pipe, s, args.stage2, heads, meds)
         else:
             table1.run(cfg, pipe, ds, variant=args.stage2)
     elif args.experiment == "backbone":
@@ -135,6 +141,8 @@ def main(argv=None) -> int:
         efficiency.run(cfg, pipe, [int(x) for x in args.n_train.split(",")],
                        variant=args.stage2,
                        heads=args.heads.split(",") if args.heads else None,
+                       mediators=args.mediators.split(",") if args.mediators else None,
+                       backbone=args.backbone,
                        seeds=([int(x) for x in str(args.seed).split(",")]
                               if args.seed is not None else (0,)))
     elif args.experiment == "faithfulness":
