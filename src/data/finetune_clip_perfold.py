@@ -34,8 +34,15 @@ from torch.utils.data import Dataset
 from transformers import CLIPModel
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
-EMO9 = ["Like", "Beautiful", "Distasteful", "Impressed", "Intellectually",
-        "Motivated", "Nostalgic", "Sad", "Amused"]
+
+#: the 7 emotions the mediator actually uses, in ratings.csv's own spelling.
+#: "Like" and "Beautiful" are deliberately NOT here: both are near-restatements
+#: of the Aesthetic score, so fine-tuning on them would train the backbone
+#: toward the target under an emotion label, and the resulting features would
+#: carry the same objection as the score fine-tuned ones. Keep this list in
+#: step with CORE7 in src/data/data.py.
+CORE7_RAW = ["Distasteful", "Impressed", "Intellectually",
+             "Motivated", "Nostalgic", "Sad", "Amused"]
 
 
 def build_path_map(images_dir: Path) -> dict:
@@ -120,7 +127,11 @@ def main():
 
     device = "cuda" if torch.cuda.is_available() else "cpu"
     torch.manual_seed(args.seed)
-    tgt_cols = EMO9 if args.target == "emotion" else ["Aesthetic"]
+    tgt_cols = CORE7_RAW if args.target == "emotion" else ["Aesthetic"]
+    missing = [c for c in tgt_cols if c not in pd.read_csv(
+        f"{args.data_dir}/ratings.csv", nrows=1).columns]
+    if missing:
+        raise SystemExit(f"ratings.csv is missing target columns: {missing}")
     print(f"Device: {device} | Fold: {args.fold} | Target: {args.target}", flush=True)
 
     df = pd.read_csv(f"{args.data_dir}/ratings.csv")

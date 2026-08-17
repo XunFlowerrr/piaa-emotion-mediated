@@ -180,15 +180,25 @@ class Pipeline:
                 E_eval=agg.loc[ev, CORE7].to_numpy(float),
             )
 
-    def group_data(self, users, domain: str, feats):
+    def group_data(self, users, domain: str, feats, with_dist: bool = False):
         """Image-level (features, population-mean emotions, mean score) for a
-        set of users. Used for both the train group and the validation group."""
+        set of users. Used for both the train group and the validation group.
+
+        with_dist also returns the distribution-valued Stage-1 targets, which
+        have to be built here because they need the raw per-rater rows.
+        """
         d = self.ds.subset(domain=domain, users=users)
         d = d[d["stimulus_id"].astype(str).isin(feats)]
         g = self.ds.per_stimulus(d)
-        return (self.backbone.matrix(feats, g.index),
-                g[CORE7].to_numpy(float),
-                g["overall"].to_numpy(float))
+        X = self.backbone.matrix(feats, g.index)
+        E = g[CORE7].to_numpy(float)
+        y = g["overall"].to_numpy(float)
+        if not with_dist:
+            return X, E, y
+        sd = self.ds.per_stimulus_spread(d).loc[g.index].to_numpy(float)
+        hist = self.ds.per_stimulus_hist(d).loc[g.index].to_numpy(float)
+        return X, E, y, {"emotion_sd": np.column_stack([E, sd]),
+                         "emotion_hist": hist}
 
     def shared_context(self, fold, domain: str, feats,
                        seed: int = 0, want: list[str] | None = None):
@@ -204,14 +214,27 @@ class Pipeline:
         seed  run-level seed for multi-seed averaging; seed=0 keeps the
               original RNG draws exactly.
         """
-        Xg, Eg, yg = self.group_data(fold.train_users, domain, feats)
-        Xv, Ev, yv = self.val_data(fold, domain, feats)
+        want = want or []
+        need_dist = any(k in want for k in ("emotion_sd", "emotion_hist"))
+
+        if need_dist:
+            Xg, Eg, yg, Dg = self.group_data(fold.train_users, domain, feats,
+                                             with_dist=True)
+            Xv, Ev, yv, Dv = self.group_data(fold.val_users, domain, feats,
+                                             with_dist=True)
+            val_dist = {k: (Xv, v) for k, v in Dv.items()}
+        else:
+            Xg, Eg, yg = self.group_data(fold.train_users, domain, feats)
+            Xv, Ev, yv = self.val_data(fold, domain, feats)
+            Dg = val_dist = None
+
         val_E = (Xv, Ev)
         val_E8 = (Xv, np.column_stack([Ev, yv]))    # for the K+1-wide controls
 
         meds = build_shared_mediators(Xg, Eg, self.cfg, fold.index,
                                       want=want, seed=seed,
-                                      val=val_E, yg=yg, val8=val_E8)
+                                      val=val_E, yg=yg, val8=val_E8,
+                                      Dg=Dg, val_dist=val_dist)
         return Xg, Eg, yg, meds
 
     def val_data(self, fold, domain: str, feats):

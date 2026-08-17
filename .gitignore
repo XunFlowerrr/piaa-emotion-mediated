@@ -12,8 +12,7 @@ Dataset/sample/
 Dataset/*.zip
 
 # feature extracted from VLM (overbig)
-features/vlm4b_features.npz
-features/*_raw.npz
+features/*
 
 # markdown files (Thai ver.)
 docs/*_THAI.md

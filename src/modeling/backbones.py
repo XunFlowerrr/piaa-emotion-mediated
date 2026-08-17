@@ -80,6 +80,12 @@ BACKBONE_SPECS = {
                      pattern="clip_ftpf_overall_v4_results/"
                              "clip_ftpf_overall_v4_fold{fold}.npz",
                      label="CLIP-ft (score)"),
+    # fine-tuned to predict the 7 emotions rather than the score, so the
+    # backbone is aligned to the bottleneck instead of to the target
+    "clip_ft_emo": dict(kind="perfold",
+                        pattern="clip_ftpf_emotion_v4_results/"
+                                "clip_ftpf_emotion_v4_fold{fold}.npz",
+                        label="CLIP-ft (emotion)"),
     "qwen4b":   dict(kind="frozen",  file="vlm4b_LT15.npz",     label="Qwen3-VL 4B"),
     "qwen8b":   dict(kind="frozen",  file="vlm_LT15.npz",       label="Qwen3-VL 8B"),
 }

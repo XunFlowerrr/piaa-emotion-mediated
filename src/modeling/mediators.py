@@ -118,7 +118,9 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
                            seed: int = 0,
                            val: tuple | None = None,
                            yg: np.ndarray | None = None,
-                           val8: tuple | None = None) -> dict[str, Mediator]:
+                           val8: tuple | None = None,
+                           Dg: dict | None = None,
+                           val_dist: dict | None = None) -> dict[str, Mediator]:
     """Build every mediator from train-user data (population-level images).
 
     Every mediator is fit by ridge (Stage-1 is always linear, regardless of
@@ -165,6 +167,22 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
     if "shuffled" in want:
         out["shuffled"] = ShuffledMediator(
             _shared_ridge(Xg, Eg[perm], cfg.ridge_alphas, val))
+
+    # --- distribution-valued Stage-1 ------------------------------------
+    # Same seven named concepts, but Stage-1 predicts how the raters were
+    # spread over the scale instead of only where they landed on average.
+    # The bottleneck is still "the 7 emotions", so Stage-2 stays readable:
+    #   emotion_sd    7 means + 7 standard deviations          (14 wide)
+    #   emotion_hist  7 emotions x 5 rating bins               (35 wide)
+    # Dg is supplied by the caller because it has to be built from the raw
+    # per-rater rows, which this module never sees.
+    for key in ("emotion_sd", "emotion_hist"):
+        if key in want:
+            if Dg is None or key not in Dg:
+                raise ValueError(f"{key} needs Dg['{key}'] (per-image targets)")
+            out[key] = EmotionMediator(
+                _shared_ridge(Xg, Dg[key], cfg.ridge_alphas,
+                              (val_dist or {}).get(key)))
 
     # --- width-matched controls -------------------------------------------
     # Variant A gives Hybrid an 8th feature (the GIAA prediction), so a K-wide

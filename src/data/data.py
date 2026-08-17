@@ -99,6 +99,36 @@ class XpassDataset:
         # Returns one row mean overall + CORE7 columns per stimulus(image), indexed by stimulus_id (str).
         return df.groupby(df["stimulus_id"].astype(str))[["overall"] + CORE7].mean()
 
+    @staticmethod
+    def per_stimulus_spread(df: pd.DataFrame) -> pd.DataFrame:
+        """Per image, how much the raters disagreed about each emotion.
+
+        The population mean throws this away: an image that leaves everyone
+        mildly amused and one that splits the room average to the same number.
+        Returned as the per-emotion standard deviation across raters, indexed
+        and ordered exactly like per_stimulus() so the two can be concatenated
+        column-wise.
+
+        Images rated by one user have no observed spread; those come back 0
+        rather than NaN, which keeps the matrix finite. Every image here has at
+        least 5 raters, so that path is defensive only.
+        """
+        return df.groupby(df["stimulus_id"].astype(str))[CORE7].std(ddof=0).fillna(0.0)
+
+    @staticmethod
+    def per_stimulus_hist(df: pd.DataFrame, n_bins: int = 5) -> pd.DataFrame:
+        """Per image, the full rating distribution of each emotion.
+
+        Columns are <emotion>_b1..b{n_bins}: the fraction of raters who gave
+        that emotion that rating, so each emotion's bins sum to 1. The emotion
+        scale is the integers 1..n_bins. Same index and order as
+        per_stimulus().
+        """
+        out = {f"{c}_b{b}": (df[c].to_numpy(float) == b).astype(float)
+               for c in CORE7 for b in range(1, n_bins + 1)}
+        wide = pd.DataFrame(out, index=df.index)
+        return wide.groupby(df["stimulus_id"].astype(str)).mean()
+
     def population_emotions(self, d: pd.DataFrame) -> pd.DataFrame:
         # Population-mean emotion ratings per image (used to fit the shared mediator).
         return self.per_stimulus(d)
