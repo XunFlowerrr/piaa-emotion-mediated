@@ -26,7 +26,7 @@ import pandas as pd
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Subset
-from tqdm import tqdm
+from tqdm import tqdm as _tqdm
 from transformers import CLIPImageProcessor
 
 from PIL import Image
@@ -34,6 +34,17 @@ from torch.utils.data import Dataset
 from transformers import CLIPModel
 
 IMG_EXTS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+
+
+def tqdm(it, **kw):
+    """Progress bar only on a real terminal.
+
+    Captured output turns the per-batch bar into thousands of log lines,
+    and once the host's log buffer fills, the next write blocks and the
+    run appears to hang. TQDM_DISABLE=1 forces it off anywhere."""
+    import os as _os
+    off = _os.environ.get("TQDM_DISABLE") == "1" or not sys.stderr.isatty()
+    return _tqdm(it, disable=off, **kw)
 
 #: the 7 emotions the mediator actually uses, in ratings.csv's own spelling.
 #: "Like" and "Beautiful" are deliberately NOT here: both are near-restatements
@@ -124,8 +135,26 @@ def main():
     ap.add_argument("--epochs", type=int, default=8)
     ap.add_argument("--batch_size", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-5)
-    ap.add_argument("--val_frac", type=float, default=0.1)
+    ap.add_argument("--val_frac", type=float, default=0.1,
+                    help="fraction of the TRAINING-GROUP images held out to "
+                         "watch for overfitting. These are the same users, "
+                         "different images -- it measures whether the backbone "
+                         "generalises across images, which is what it is for. "
+                         "The user-level held-out group is a separate thing "
+                         "and is never touched here.")
+    ap.add_argument("--patience", type=int, default=0,
+                    help="stop after this many epochs with no improvement in "
+                         "validation loss (0 = run all epochs). The best "
+                         "checkpoint is restored either way, so this only "
+                         "saves time -- it cannot change the features.")
     ap.add_argument("--seed", type=int, default=42)
+    # DataLoader workers are respawned at every epoch boundary unless they
+    # are persistent, and spawning several of them on a small-CPU box (a
+    # Kaggle kernel has 4 vCPU) can deadlock there -- the symptom is a run
+    # that stops dead between two epochs with no error. 2 persistent
+    # workers keeps the loader fed without that risk; 0 disables
+    # multiprocessing entirely if it ever happens again.
+    ap.add_argument("--num_workers", type=int, default=2)
     args = ap.parse_args()
 
     # mps is Apple silicon; it has no autocast/GradScaler support here, so the
@@ -191,8 +220,12 @@ def main():
     perm = rng.permutation(len(keep))
     n_val = int(len(keep) * args.val_frac)
     va, tr = perm[:n_val].tolist(), perm[n_val:].tolist()
-    tr_loader = DataLoader(Subset(full, tr), batch_size=args.batch_size, shuffle=True, num_workers=4)
-    va_loader = DataLoader(Subset(full, va), batch_size=args.batch_size, shuffle=False, num_workers=4)
+    nw = args.num_workers
+    dl = dict(num_workers=nw, persistent_workers=nw > 0)
+    tr_loader = DataLoader(Subset(full, tr), batch_size=args.batch_size,
+                           shuffle=True, **dl)
+    va_loader = DataLoader(Subset(full, va), batch_size=args.batch_size,
+                           shuffle=False, **dl)
 
     model = CLIPRegressor(len(tgt_cols)).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
@@ -200,7 +233,11 @@ def main():
     scaler = torch.amp.GradScaler("cuda", enabled=amp)
     lossf = nn.MSELoss()
 
-    best, best_state = 1e9, None
+    # Keep the curve, not just the printed line: without it the only record
+    # of how training went is whatever console log happens to survive, and a
+    # log cannot be matched back to the .npz it produced.
+    history = []
+    best, best_state, best_ep = 1e9, None, -1
     for ep in range(args.epochs):
         model.train(); tl = 0.0
         for px, y, _ in tqdm(tr_loader, desc=f"f{args.fold} ep{ep}"):
@@ -218,18 +255,28 @@ def main():
                     vl += lossf(model(px), y).item() * len(px)
         tl /= len(tr); vl /= max(1, n_val)
         print(f"Fold {args.fold} Ep {ep}: train_loss={tl:.4f} val_loss={vl:.4f}", flush=True)
+        history.append((ep, tl, vl))
         if vl < best:
-            best = vl
+            best, best_ep = vl, ep
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+        elif args.patience and ep - best_ep >= args.patience:
+            print(f"Fold {args.fold}: stopping at epoch {ep}; "
+                  f"no improvement since epoch {best_ep} (val {best:.4f})",
+                  flush=True)
+            break
     if best_state:
         model.load_state_dict(best_state)
+    # State it rather than leaving it to be inferred from the log: the features
+    # below come from this epoch, not from the last one trained.
+    print(f"Fold {args.fold}: extracting from epoch {best_ep} "
+          f"(val MSE {best:.4f}); trained {len(history)} epochs", flush=True)
 
     # Extract features for all 6526 images (inference only)
     allsid = df["sample_id"].astype(str).drop_duplicates().tolist()
     allsid = [s for s in allsid if pth(s) is not None]
     allpaths = [pth(s) for s in allsid]
     ds = ImgDS(allsid, allpaths, np.zeros((len(allsid), len(tgt_cols)), np.float32), proc)
-    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, num_workers=4)
+    loader = DataLoader(ds, batch_size=args.batch_size, shuffle=False, **dl)
     feats = np.zeros((len(allsid), model.feat_dim), np.float32)
     model.eval()
     with torch.no_grad():
@@ -237,7 +284,11 @@ def main():
             with torch.amp.autocast("cuda", enabled=amp):
                 f = model(px.to(device), return_feat=True)
             feats[idxb.numpy()] = f.float().cpu().numpy()
-    np.savez_compressed(args.out, stimulus_ids=np.array(allsid), features=feats)
+    # history/best_epoch travel with the features, so any later claim about
+    # the training run can be checked against the file it came from.
+    np.savez_compressed(args.out, stimulus_ids=np.array(allsid), features=feats,
+                        history=np.array(history, np.float32),
+                        best_epoch=np.int32(best_ep))
     print(f"Saved {args.out} {feats.shape} (best val MSE={best:.4f})", flush=True)
 
 
