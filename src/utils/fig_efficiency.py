@@ -1,6 +1,6 @@
 """Efficiency curves 
 
-from output/efficiency/per_unit.csv 
+from output/efficiency/<backbone>/raw.csv 
 
 err="sd"  -> band is +/- 1 sample sd across user-domain units
 err="sem" -> band is +/- 1 standard error of the mean (sd / sqrt(n))
@@ -17,7 +17,7 @@ from src.utils.plots import AMBER, BLUE, GREY, grid, save, setup
 METHODS = ("pop_zero", "direct", "hybrid")
 
 STYLE = {
-    "pop_zero": dict(color=AMBER, ls=":", marker=None, label="Population (0 params)"),
+    "pop_zero": dict(color=AMBER, ls=":", marker=None, label="Population GIAA (0 user params)"),
     "direct":   dict(color=GREY, ls="--", marker="^", label="Direct (512 params)"),
     "hybrid":   dict(color=BLUE, ls="-", marker="o", label="Hybrid (7 params)"),
 }
@@ -71,7 +71,32 @@ def run(cfg, err: str = "sem", domain_split: bool = False):
     import matplotlib.pyplot as plt
 
     setup()
-    df = pd.read_csv(cfg.output_dir / "efficiency" / "per_unit.csv")
+    # raw{tag}.csv holds one row per (unit, seed); the figure wants one row
+    # per unit, so the seed average that used to be a file on disk happens
+    # here instead. Falls back to the pre-reorganisation layout so an old
+    # output directory still plots.
+    eff = cfg.output_dir / "efficiency"
+    src = eff / (cfg.backbone if cfg.backbone != "clip" else "clip") / "raw.csv"
+    if not src.exists():
+        src = eff / "per_unit.csv"          # layout before the reorganisation
+    df = pd.read_csv(src)
+    if "seed" in df.columns:
+        df = df.groupby(["n_train", "mediator", "head", "fold", "domain",
+                         "user_id"], as_index=False)[
+            ["ccc", "srocc", "plcc", "eff_dof"]].mean()
+
+    # This module still speaks the naming from before efficiency.py was
+    # rewritten: a "model" column holding pop_zero/direct/hybrid. The rewrite
+    # renamed it to "mediator" with population/identity/emotion and dropped
+    # the pop_zero formula for the real GIAA head, and nothing updated the
+    # figure, so plotting raised AttributeError on df.model. Map the names
+    # here rather than renaming everything downstream.
+    if "model" not in df.columns:
+        df = df.copy()
+        df["model"] = df["mediator"].map({"population": "pop_zero",
+                                          "identity": "direct",
+                                          "emotion": "hybrid"})
+        df = df[df["model"].notna()]
     n_list = sorted(df.n_train.unique().tolist())
 
     if domain_split:

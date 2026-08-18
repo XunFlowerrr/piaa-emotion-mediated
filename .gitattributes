@@ -1,0 +1,11 @@
+# Normalise line endings in the index so a Windows checkout and a macOS one
+# do not show every text file as modified. Without this, a CRLF-only diff
+# across the split files and the CSVs buries any real change in the noise.
+* text=auto
+
+# Binary: never touch these
+*.png binary
+*.pdf binary
+*.npz binary
+*.zip binary
+*.jpg binary

@@ -89,3 +89,54 @@ def effective_dof(X, alpha: float) -> float:
     G = Z.T @ Z
     p = G.shape[0]
     return float(np.trace(Z @ np.linalg.solve(G + alpha * np.eye(p), Z.T)))
+
+
+def tost_equivalence(a, b, delta: float, alpha: float = 0.05) -> dict:
+    """Two one-sided tests: is `a` equivalent to `b` to within +/- delta?
+
+    A non-significant difference test does NOT mean two methods are the same
+    -- it means the data could not tell them apart, which is also what a
+    badly underpowered study looks like. The claim this paper actually wants
+    is stronger and directional: a 7-parameter head is *not meaningfully
+    worse* than a 512-parameter one. That is an equivalence claim, and TOST
+    is the test for it.
+
+    TOST rejects "the difference is at least delta in some direction" from
+    both sides. Both one-sided tests must pass at `alpha`, so the reported
+    p is the larger of the two. Rejecting both means the true mean
+    difference sits inside (-delta, +delta) at the chosen confidence.
+
+    delta has to be fixed on substantive grounds *before* looking at the
+    result -- the smallest SROCC gap that would matter -- not tuned until
+    the test passes. Choosing it afterwards turns TOST into a way of
+    proving whatever the data happens to show.
+
+    Paired: a and b are per-unit scores in the same order.
+    """
+    import numpy as np
+    from scipy import stats
+
+    d = np.asarray(a, float) - np.asarray(b, float)
+    d = d[np.isfinite(d)]
+    n = len(d)
+    if n < 3:
+        return dict(n=n, mean_diff=float("nan"), p_tost=float("nan"),
+                    equivalent=False, ci_lo=float("nan"), ci_hi=float("nan"))
+
+    se = d.std(ddof=1) / np.sqrt(n)
+    if se == 0:
+        equiv = abs(d.mean()) < delta
+        return dict(n=n, mean_diff=float(d.mean()), p_tost=0.0 if equiv else 1.0,
+                    equivalent=equiv, ci_lo=float(d.mean()), ci_hi=float(d.mean()))
+
+    df = n - 1
+    # H0_lower: mean <= -delta   H0_upper: mean >= +delta
+    p_lower = stats.t.sf((d.mean() + delta) / se, df)
+    p_upper = stats.t.cdf((d.mean() - delta) / se, df)
+    p = max(p_lower, p_upper)
+
+    # the (1-2*alpha) CI is the interval TOST actually compares to +/-delta
+    t_crit = stats.t.ppf(1 - alpha, df)
+    lo, hi = d.mean() - t_crit * se, d.mean() + t_crit * se
+    return dict(n=n, mean_diff=float(d.mean()), p_tost=float(p),
+                equivalent=bool(p < alpha), ci_lo=float(lo), ci_hi=float(hi))
