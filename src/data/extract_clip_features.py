@@ -51,7 +51,12 @@ def main():
     ap.add_argument("--batch_size", type=int, default=32)
     args = ap.parse_args()
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
     print(f"Device: {device}")
 
     model = CLIPModel.from_pretrained("openai/clip-vit-base-patch16").to(device).eval()

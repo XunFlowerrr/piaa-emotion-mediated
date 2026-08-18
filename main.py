@@ -61,11 +61,13 @@ def main(argv=None) -> int:
     ap.add_argument("--all-sessions", action="store_true",
                     help="disable the first-session filter (not what the paper uses)")
     ap.add_argument("--splits", action="store_true", help="verify: check the data split")
+    ap.add_argument("--parallel", action="store_true",
+                    help="verify: check serial vs multi-core reproducibility")
     ap.add_argument("--repro", metavar="EXPERIMENT", default=None,
                     help="verify: run EXPERIMENT twice, check the results are "
                          "byte-identical (e.g. --repro efficiency)")
     ap.add_argument("--seed", default=None,
-                    help="table1: run only these seeds, e.g. --seed 1 "
+                    help="table1/verify: run only these seeds, e.g. --seed 1 "
                          "(seeds are independent, so they can run in parallel; "
                          "the last one merges whatever is on disk)")
     ap.add_argument("--stage2", default=None, choices=["plain", "A", "B", "C"],
@@ -86,6 +88,8 @@ def main(argv=None) -> int:
                          "per_unit*_<h>_seed*.csv and leaves the full run's "
                          "files untouched; merge with merge_table1.py")
     ap.add_argument("--output-dir", default=None)
+    ap.add_argument("-j", "--jobs", type=int, default=None,
+                    help="number of parallel CPU jobs (-1 for all cores, 1 for serial)")
     args = ap.parse_args(argv)
 
     cfg = Config()
@@ -93,10 +97,17 @@ def main(argv=None) -> int:
         cfg.first_session_only = False
     if args.output_dir:
         cfg.output_dir = Path(args.output_dir)
+    if args.jobs is not None:
+        cfg.n_jobs = args.jobs
     cfg.backbone = args.backbone
 
     if args.experiment == "verify":
         from src.utils import verify
+        if args.parallel:
+            seeds = ([int(x) for x in str(args.seed).split(",")]
+                     if args.seed is not None else (0, 1))
+            n_train = int(args.n_train.split(",")[0]) if args.n_train else 10
+            return 0 if verify.check_parallel_repro(cfg, backbone=args.backbone, seeds=seeds, n_train=n_train) else 1
         if args.repro:
             ds, bb, sp, pipe = build(cfg, args.backbone)
             name = args.repro

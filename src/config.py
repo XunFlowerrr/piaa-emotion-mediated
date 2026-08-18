@@ -35,6 +35,7 @@ class Config:
     min_test: int = 20      # skip a user if fewer eval images remain
 
     backbone: str = "clip"  #"qwen3-vl-4b", "qwen3-vl-8b"
+    n_jobs: int = -1        # CPU workers (-1 = all available cores, 1 = serial)
 
     # ridge head. The grid runs to 1e6, well past the point where a 7- or
     # 512-feature head on <=100 standardized samples is fully shrunk, so the

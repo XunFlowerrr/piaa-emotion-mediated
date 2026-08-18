@@ -66,8 +66,13 @@ def main():
                     help='"all" or list like "10,12,15,18,20"')
     args = ap.parse_args()
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    dtype = torch.float16 if device == "cuda" else torch.float32
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
+    dtype = torch.float16 if device in ("cuda", "mps") else torch.float32
     if device == "cpu":
         print("WARNING: GPU not found - running VLM on CPU is extremely slow.")
     print(f"Device: {device} | Model: {args.model} | Prompt: {args.prompt!r}")

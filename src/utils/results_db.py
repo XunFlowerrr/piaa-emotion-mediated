@@ -59,7 +59,7 @@ def load(db_path: Path | str = DB_PATH) -> pd.DataFrame:
     p = Path(db_path)
     if not p.exists():
         return pd.DataFrame(columns=COLUMNS)
-    d = pd.read_csv(p)
+    d = pd.read_csv(p, low_memory=False)
     for col, val in DEFAULTS.items():          # columns added after some rows
         if col not in d.columns:               # were written
             d[col] = val
