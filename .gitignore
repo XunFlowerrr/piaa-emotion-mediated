@@ -17,7 +17,7 @@ features/*
 # markdown files (Thai ver.)
 docs/*_THAI.md
 
-ืnotebooks/*
+notebooks/*
 
 # Kaggle upload bundle: ~900 MB, rebuilt by src/data/make_kaggle_bundle.py
 *_kaggle_bundle.zip

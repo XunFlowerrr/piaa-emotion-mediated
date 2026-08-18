@@ -10,7 +10,7 @@
   "n_train": 100,
   "split_seed": 42,
   "min_test": 20,
-  "backbone": "clip",
+  "backbone": "qwen8b",
   "ridge_alphas": [
     0.01,
     0.03162277660168379,
@@ -57,7 +57,11 @@
     "pca",
     "emotion",
     "random",
-    "shuffled"
+    "shuffled",
+    "emotion_sd",
+    "emotion_hist",
+    "emotion_mlp",
+    "emotion_joint"
   ],
   "mlp_hidden": 128,
   "mlp_alpha": 0.0,
@@ -73,5 +77,12 @@
   "mlp_validation_fraction": 0.15,
   "mlp_n_iter_no_change": 20,
   "mlp_search_val_frac": 0.2,
+  "stage1_mlp_max_iter": 300,
+  "stage1_mlp_lr_grid": [
+    0.0003,
+    0.001,
+    0.003
+  ],
+  "joint_score_weight": 1.0,
   "mediator_width": 7
 }
