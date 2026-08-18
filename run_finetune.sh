@@ -4,6 +4,7 @@
 #   ./run_finetune.sh emotion      # predict the 7 emotions  -> clip_ft_emo
 #   ./run_finetune.sh overall      # predict the score       -> clip_ft
 #   EPOCHS=4 ./run_finetune.sh emotion
+#   EPOCHS=20 PATIENCE=3 ./run_finetune.sh emotion   # let early stopping decide
 #
 # Picks CUDA, then Apple-silicon MPS, then CPU. Folds already finished are
 # skipped, so re-running after an interruption resumes instead of redoing.
@@ -13,6 +14,8 @@ TARGET="${1:-emotion}"
 EPOCHS="${EPOCHS:-8}"
 BATCH="${BATCH:-32}"
 LR="${LR:-1e-5}"
+PATIENCE="${PATIENCE:-2}"
+VAL_FRAC="${VAL_FRAC:-0.15}"
 SEED="${SEED:-42}"
 FOLDS="${FOLDS:-0 1 2 3 4}"
 IMAGES_DIR="${IMAGES_DIR:-Dataset/sample}"
@@ -25,6 +28,7 @@ echo "================================================================"
 echo "  target : $TARGET"
 echo "  folds  : $FOLDS"
 echo "  epochs : $EPOCHS   batch: $BATCH   lr: $LR"
+echo "  early stop: patience=$PATIENCE on a $VAL_FRAC held-out image split"
 echo "  images : $IMAGES_DIR"
 echo "================================================================"
 
@@ -77,7 +81,8 @@ for k in $FOLDS; do
         --images_dir "$IMAGES_DIR" \
         --v4_split_dir Dataset/split_v4_10group \
         --out "$OUT" \
-        --epochs "$EPOCHS" --batch_size "$BATCH" --lr "$LR" --seed "$SEED"
+        --epochs "$EPOCHS" --batch_size "$BATCH" --lr "$LR" --seed "$SEED" \
+        --patience "$PATIENCE" --val_frac "$VAL_FRAC"
     echo "-- fold $k done in $(( ($(date +%s) - START) / 60 )) min"
 done
 

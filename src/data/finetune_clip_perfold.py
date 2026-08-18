@@ -135,7 +135,18 @@ def main():
     ap.add_argument("--epochs", type=int, default=8)
     ap.add_argument("--batch_size", type=int, default=12)
     ap.add_argument("--lr", type=float, default=1e-5)
-    ap.add_argument("--val_frac", type=float, default=0.1)
+    ap.add_argument("--val_frac", type=float, default=0.1,
+                    help="fraction of the TRAINING-GROUP images held out to "
+                         "watch for overfitting. These are the same users, "
+                         "different images -- it measures whether the backbone "
+                         "generalises across images, which is what it is for. "
+                         "The user-level held-out group is a separate thing "
+                         "and is never touched here.")
+    ap.add_argument("--patience", type=int, default=0,
+                    help="stop after this many epochs with no improvement in "
+                         "validation loss (0 = run all epochs). The best "
+                         "checkpoint is restored either way, so this only "
+                         "saves time -- it cannot change the features.")
     ap.add_argument("--seed", type=int, default=42)
     # DataLoader workers are respawned at every epoch boundary unless they
     # are persistent, and spawning several of them on a small-CPU box (a
@@ -248,8 +259,17 @@ def main():
         if vl < best:
             best, best_ep = vl, ep
             best_state = {k: v.cpu().clone() for k, v in model.state_dict().items()}
+        elif args.patience and ep - best_ep >= args.patience:
+            print(f"Fold {args.fold}: stopping at epoch {ep}; "
+                  f"no improvement since epoch {best_ep} (val {best:.4f})",
+                  flush=True)
+            break
     if best_state:
         model.load_state_dict(best_state)
+    # State it rather than leaving it to be inferred from the log: the features
+    # below come from this epoch, not from the last one trained.
+    print(f"Fold {args.fold}: extracting from epoch {best_ep} "
+          f"(val MSE {best:.4f}); trained {len(history)} epochs", flush=True)
 
     # Extract features for all 6526 images (inference only)
     allsid = df["sample_id"].astype(str).drop_duplicates().tolist()
