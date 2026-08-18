@@ -17,7 +17,7 @@ features/*
 # markdown files (Thai ver.)
 docs/*_THAI.md
 
-ืnotebooks/*
+notebooks/*
 
 # Large zip archives and artifacts
 *.zip

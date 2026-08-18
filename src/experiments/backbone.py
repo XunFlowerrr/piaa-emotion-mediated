@@ -99,7 +99,7 @@ def summarize(df: pd.DataFrame, names: list[str]) -> pd.DataFrame:
         pop = d[d.mediator == "population"].set_index(idx)
         r = dict(backbone=name, label=backbone_label(name), head=head)
 
-        # the comparison Hayashi asks for first: is either personalized model
+        # the comparison the reviewer asks for first: is either personalized model
         # actually ahead of the no-personalization baseline on this backbone?
         for m in ("srocc", "plcc"):
             if pop.empty:

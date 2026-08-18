@@ -284,6 +284,12 @@ def main():
             with torch.amp.autocast("cuda", enabled=amp):
                 f = model(px.to(device), return_feat=True)
             feats[idxb.numpy()] = f.float().cpu().numpy()
+
+    # L2-normalise, exactly as extract_clip_features.py does before saving the
+    # frozen baseline. Without this the fine-tuned rows would differ from the
+    # frozen row in preprocessing as well as in training, and the backbone
+    # comparison could not attribute a difference to the fine-tuning.
+    feats /= np.clip(np.linalg.norm(feats, axis=1, keepdims=True), 1e-8, None)
     # history/best_epoch travel with the features, so any later claim about
     # the training run can be checked against the file it came from.
     np.savez_compressed(args.out, stimulus_ids=np.array(allsid), features=feats,
