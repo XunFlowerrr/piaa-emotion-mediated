@@ -39,7 +39,18 @@ def _tag(variant, heads, mediators, backbone) -> str:
     v = "" if variant in (None, "plain") else f"_{variant}"
     h = "" if list(heads) == ["ridge"] else "_" + "".join(x[0] for x in heads)
     b = "" if backbone in (None, "clip") else f"_{backbone}"
-    m = "" if list(mediators) == MEDIATORS else "_m" + str(len(mediators))
+    # The mediator part has to name the mediators, not count them: two
+    # different 3-mediator runs (emotion/emotion_mlp/emotion_joint and
+    # emotion/emotion_sd/emotion_hist) both used to render as "_m3" and the
+    # second one silently overwrote the first.
+    if list(mediators) == MEDIATORS:
+        m = ""
+    else:
+        m = "_m" + "-".join(x.replace("emotion", "emo") for x in mediators)
+        if len(m) > 60:                      # keep paths sane, stay unique
+            import hashlib
+            m = "_m%d_%s" % (len(mediators),
+                             hashlib.md5("|".join(mediators).encode()).hexdigest()[:8])
     return v + h + b + m
 
 

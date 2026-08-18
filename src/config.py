@@ -71,8 +71,16 @@ class Config:
     # benefit" from GIAA -- that reasoning was wrong: withholding the anchor
     # from them is itself the confound the paper is trying to avoid, so every
     # mediator gets the same treatment and the comparison stays about content.
+    # Every mediator that can be a row in a variant table has to be listed,
+    # including the distribution-valued Stage-1s and the Stage-1 capacity
+    # variants. Leaving one out does not turn its anchor off cleanly -- it
+    # silently runs that row *unanchored* while the rows next to it are
+    # anchored, so a column headed "anchor C" would be comparing two
+    # different methods.
     stage2_variant_mediators: tuple = ("identity", "pca", "emotion",
-                                       "random", "shuffled")
+                                       "random", "shuffled",
+                                       "emotion_sd", "emotion_hist",
+                                       "emotion_mlp", "emotion_joint")
 
     # MLP head
     mlp_hidden: int = 128
@@ -83,6 +91,21 @@ class Config:
     mlp_validation_fraction: float = 0.15   # unused while early_stopping=False
     mlp_n_iter_no_change: int = 20
     mlp_search_val_frac: float = 0.2   # val fraction when searching lr (personal head only)
+
+    # Stage-1 MLP budget. The personal head trains on ~100 samples, but a
+    # Stage-1 MLP trains on ~4500 images with up to 4096 input features
+    # (Qwen-8B), and 2000 Adam epochs there costs hours per fold while mostly
+    # fitting noise -- a 4096->128->7 map on 4500 samples converges long
+    # before that. These keep the Stage-1 MLP affordable enough to report as
+    # a baseline; they are stated here rather than tuned per run.
+    stage1_mlp_max_iter: int = 300
+    stage1_mlp_lr_grid: tuple = (3e-4, 1e-3, 3e-3)
+
+    # Weight on the score term when Stage-1 is trained jointly
+    # (mediator "emotion_joint"). 0 would make it identical to
+    # emotion_mlp; 1 weights predicting the population score as much as
+    # predicting one emotion.
+    joint_score_weight: float = 1.0
 
     mediator_width: int = 7
 
