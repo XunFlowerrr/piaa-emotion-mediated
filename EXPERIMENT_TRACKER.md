@@ -23,6 +23,7 @@ This document provides a chronological record of all experiment suites, their su
 | **2** | `hayashi` | `COMPLETED (6/6)` | `output/hayashi/` (`output/hayashi/hayashi_all_runs.zip`) | Headline runs requested by Hayashi (A, B, C, D, E) on CLIP after git pull |
 | **3** | `rebuttal` | `COMPLETED (6/6)` | `output/rebuttal/` (`output/rebuttal/rebuttal_all_runs.zip`) | Full systematic rebuttal suite (Anchor C vs Plain baselines across all modules) |
 | **4** | `crimson_falcon` | `PENDING (0/1)` | `output/crimson_falcon/` (`output/crimson_falcon/crimson_falcon_all_runs.zip`) | Qwen2.5-VL-8B Joint vs Sequential Bottleneck sweep under Anchor C |
+| **5** | `sassy_dragon` | `PENDING (0/5)` | `output/sassy_dragon/` (`output/sassy_dragon/sassy_dragon_all_runs.zip`) | Multimodal Distributional (1A–1C) & MLP Joint (2A–2B) Bottleneck Suite (Anchor C) |
 
 ---
 

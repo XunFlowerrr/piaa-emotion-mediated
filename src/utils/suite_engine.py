@@ -207,14 +207,35 @@ def resolve_selection(suite: Suite, query: str) -> list[SuiteStep]:
     for token in tokens:
         match = None
         for s in suite.steps:
-            if str(s.id) == token or s.codename.lower() == token:
+            code_lower = s.codename.lower()
+            folder_lower = s.folder.lower()
+            # 1. Exact match on numeric ID (e.g. "1", "2")
+            if str(s.id) == token:
+                match = s
+                break
+            # 2. Exact match on codename or folder name (e.g. "1a_dist-clip-ft")
+            if code_lower == token or folder_lower == token:
+                match = s
+                break
+            # 3. Match on prefix (e.g. "1a", "2b")
+            if (
+                folder_lower.startswith(f"{token}_")
+                or code_lower.startswith(f"{token}_")
+                or code_lower.startswith(f"{token}-")
+            ):
+                match = s
+                break
+            # 4. Match on name without index prefix (e.g. "dist-clip-ft" matching "1A_dist-clip-ft")
+            clean_code = code_lower.split("_", 1)[-1] if "_" in code_lower else code_lower
+            clean_folder = folder_lower.split("_", 1)[-1] if "_" in folder_lower else folder_lower
+            if clean_code == token or clean_folder == token:
                 match = s
                 break
         if match:
             if match not in selected:
                 selected.append(match)
         else:
-            valid_keys = [f"{s.id}/{s.codename}" for s in suite.steps]
+            valid_keys = [f"{s.id} ({s.codename})" for s in suite.steps]
             print(f"Error: Unknown step or codename '{token}'. Valid options in suite '{suite.name}' are: {', '.join(valid_keys)}")
             sys.exit(1)
     return selected
