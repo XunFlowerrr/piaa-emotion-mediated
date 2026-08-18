@@ -54,7 +54,7 @@ def snapshot_output(suite_name: str) -> dict[Path, float]:
     if not OUTPUT_DIR.exists():
         return snap
     for p in OUTPUT_DIR.rglob("*"):
-        if p.is_file() and suite_name not in p.parts:
+        if p.is_file() and not p.name.startswith(".") and p.name != ".DS_Store" and suite_name not in p.parts:
             try:
                 snap[p] = p.stat().st_mtime
             except OSError:
@@ -274,7 +274,7 @@ def run_suite_steps(suite: Suite, steps_to_run: list[SuiteStep]):
         after_snap = snapshot_output(suite.name)
         changed_files = []
         for p, mtime in after_snap.items():
-            if p.name == "raw_all.csv":
+            if p.name == "raw_all.csv" or p.name.startswith(".") or p.name == ".DS_Store":
                 continue
             if p not in before_snap or mtime > before_snap[p]:
                 changed_files.append(p)
