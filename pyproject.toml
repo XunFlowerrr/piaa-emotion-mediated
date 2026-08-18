@@ -11,6 +11,9 @@ dependencies = [
     "matplotlib>=3.8",
     "torchvision>=0.28.0",
     "accelerate>=1.14.0",
+    "tabulate>=0.10.0",
+    "rich>=15.0.0",
+    "coolname>=5.0.0",
 ]
 
 [project.optional-dependencies]

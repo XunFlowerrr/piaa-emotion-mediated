@@ -19,9 +19,9 @@ docs/*_THAI.md
 
 ืnotebooks/*
 
-# Kaggle upload bundle: ~900 MB, rebuilt by src/data/make_kaggle_bundle.py
-*_kaggle_bundle.zip
-piaa_kaggle_bundle.zip
+# Large zip archives and artifacts
+*.zip
+archive/artifact/
 
 # Duplicate reruns kept for comparison, not part of the reported results
 output/_duplicate_runs/
