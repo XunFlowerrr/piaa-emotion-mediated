@@ -24,6 +24,7 @@ This document provides a chronological record of all experiment suites, their su
 | **3** | `rebuttal` | `COMPLETED (6/6)` | `output/rebuttal/` (`output/rebuttal/rebuttal_all_runs.zip`) | Full systematic rebuttal suite (Anchor C vs Plain baselines across all modules) |
 | **4** | `crimson_falcon` | `PENDING (0/1)` | `output/crimson_falcon/` (`output/crimson_falcon/crimson_falcon_all_runs.zip`) | Qwen2.5-VL-8B Joint vs Sequential Bottleneck sweep under Anchor C |
 | **5** | `sassy_dragon` | `COMPLETED (5/5)` | `output/sassy_dragon/` (`output/sassy_dragon/sassy_dragon_all_runs.zip`) | Multimodal Distributional (1A–1C) & MLP Joint (2A–2B) Bottleneck Suite (Anchor C) |
+| **6** | `radiant_phoenix` | `PENDING (0/2)` | `output/radiant_phoenix/` (`output/radiant_phoenix/radiant_phoenix_all_runs.zip`) | Qwen Vision-Language (8B & 4B) Joint vs Sequential Bottleneck Suite (Anchor C) |
 
 ---
 
