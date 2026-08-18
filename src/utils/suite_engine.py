@@ -241,6 +241,26 @@ def resolve_selection(suite: Suite, query: str) -> list[SuiteStep]:
     return selected
 
 
+def play_sound(kind: str = "step_done"):
+    """Play a non-blocking system audio notification on completion/error."""
+    import platform
+    if platform.system() == "Darwin":
+        sound_map = {
+            "step_done": "/System/Library/Sounds/Glass.aiff",
+            "suite_done": "/System/Library/Sounds/Hero.aiff",
+            "error": "/System/Library/Sounds/Basso.aiff"
+        }
+        sound_path = sound_map.get(kind, "/System/Library/Sounds/Glass.aiff")
+        try:
+            subprocess.Popen(["afplay", sound_path], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            return
+        except Exception:
+            pass
+    # Fallback to terminal bell
+    sys.stdout.write("\a")
+    sys.stdout.flush()
+
+
 def run_suite_steps(suite: Suite, steps_to_run: list[SuiteStep]):
     suite_dir = suite.output_dir
     suite_dir.mkdir(parents=True, exist_ok=True)
@@ -265,6 +285,7 @@ def run_suite_steps(suite: Suite, steps_to_run: list[SuiteStep]):
 
         res = subprocess.run(step.cmd, cwd=ROOT)
         if res.returncode != 0:
+            play_sound("error")
             print(f"\n[ERROR] Step '{step.codename}' failed with exit code {res.returncode}")
             sys.exit(res.returncode)
 
@@ -287,8 +308,10 @@ def run_suite_steps(suite: Suite, steps_to_run: list[SuiteStep]):
             print(f"  [+] Output Saved: {dest.relative_to(ROOT)}")
 
         print(f"[{suite.name}/{step.folder}] {copied_count} output file(s) stored in {target_dir.relative_to(ROOT)}")
+        play_sound("step_done")
 
     total_elapsed = time.time() - total_start
+    play_sound("suite_done")
     print("\n" + "=" * 80)
     print(f"SUITE '{suite.name}' RUN(S) COMPLETE in {total_elapsed / 60:.2f} minutes!")
     print(f"Outputs stored in: {suite_dir.relative_to(ROOT)}/")
