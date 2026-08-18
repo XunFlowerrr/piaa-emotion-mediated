@@ -127,7 +127,7 @@ def summarize(df: pd.DataFrame, n_list: list[int]) -> pd.DataFrame:
                                      suffixes=("", "_pop")).dropna()
                     p = (np.nan if med == REFERENCE
                          else wilcoxon_paired(j[m], j[f"{m}_pop"]))
-                    # the question Hayashi asks: does personalization beat the
+                    # the question the reviewer asks: does personalization beat the
                     # population model at this support size, and is it real?
                     r[f"{m}_beats_pop"] = bool(len(j) and
                                                j[m].mean() > j[f"{m}_pop"].mean())

@@ -62,7 +62,7 @@ class Config:
     #   C      fit the head on the residual y - y_pop
     stage2_variant: str = "plain"
 
-    # Which mediators the variant applies to. Hayashi's instruction is to
+    # Which mediators the variant applies to. The reviewer instruction is to
     # apply it to every mediator, Random and Shuffled included: if only Hybrid
     # (or only Hybrid/Direct/PCA) carried the population prior, any edge those
     # rows show would be a fact about who got the prior, not about the
