@@ -58,6 +58,42 @@ class _WithPopFeature:
         return np.hstack([base, pop])
 
 
+class _ResidualHead:
+    """Variant C for a head with no weight vector (the MLP).
+
+    Fits the wrapped head on y_u - y_pop and adds y_pop back at predict time,
+    so the personal model degrades onto the population model exactly as the
+    anchored ridge does. Nothing about the wrapped head changes, so its
+    hyperparameter is still selected on the validation group by the same
+    code path as every other condition.
+    """
+
+    is_linear = False
+
+    def __init__(self, head, pop_head):
+        self.head, self.pop_head = head, pop_head
+
+    def _pop(self, X_raw):
+        return np.asarray(self.pop_head.predict(X_raw), float).ravel()
+
+    def fit(self, M, y, X_raw=None, frozen_alpha=None, frozen_lr=None, **_):
+        r = np.asarray(y, float).ravel() - self._pop(X_raw)
+        if frozen_lr is not None:
+            self.head.fit(M, r, frozen_lr=frozen_lr)
+        elif frozen_alpha is not None:
+            self.head.fit(M, r, frozen_alpha=frozen_alpha)
+        else:
+            self.head.fit(M, r)
+        return self
+
+    def predict(self, M, X_raw=None):
+        return self._pop(X_raw) + np.asarray(self.head.predict(M), float).ravel()
+
+    @property
+    def effective_dof(self):
+        return getattr(self.head, "effective_dof", float("nan"))
+
+
 class _PopAnchoredRidge:
     """Variants B and C: a personal ridge that degrades onto the population
     model rather than onto a constant.
@@ -232,7 +268,8 @@ class Pipeline:
 
         meds = build_shared_mediators(Xg, Eg, self.cfg, fold.index,
                                       want=want, seed=seed,
-                                      val=val_E, Dg=Dg, val_dist=val_dist)
+                                      val=val_E, yg=yg, val_y=yv, Dg=Dg,
+                                      val_dist=val_dist)
         return Xg, Eg, yg, meds
 
     def val_data(self, fold, domain: str, feats):
@@ -265,7 +302,15 @@ class Pipeline:
             scaler, w_pop, b_pop = anchor
             return _PopAnchoredRidge(self.cfg, variant, scaler, w_pop, b_pop,
                                      pop_head, kind=kind)
-        # the MLP has no anchored form, so under B/C it trains as a plain head
+        if variant == "C" and anchor is not None:
+            # C is "fit the head on y - y_pop and add the prediction back",
+            # which needs no weight space and so applies to the MLP too.
+            # Running the MLP unanchored here while the ridge next to it is
+            # anchored would make an "anchor C" column compare two different
+            # methods rather than two heads.
+            return _ResidualHead(make_head(kind, self.cfg, seed=seed), pop_head)
+        # B shrinks toward w_pop, which only exists for a linear head; an MLP
+        # under B therefore trains plain, and the table has to say so.
         return make_head(kind, self.cfg, seed=seed)
 
     def select_personal_hyperparam(self, fold, domain: str, feats, med, kind: str,
@@ -295,7 +340,12 @@ class Pipeline:
             M_ev = med.transform(unit.X_eval)
             for c in grid:
                 h = self.make_personal(kind, unit.user_id, variant, anchor, pop_head)
-                if isinstance(h, _PopAnchoredRidge):
+                if isinstance(h, _ResidualHead):
+                    kw = ({"frozen_alpha": float(c)} if kind in ALPHA_HEADS
+                          else {"frozen_lr": float(c)})
+                    h.fit(M_tr, unit.y_train, X_raw=unit.X_train, **kw)
+                    p = h.predict(M_ev, X_raw=unit.X_eval)
+                elif isinstance(h, _PopAnchoredRidge):
                     h.fit(M_tr, unit.y_train, X_raw=unit.X_train,
                           frozen_alpha=float(c))
                     p = h.predict(M_ev, X_raw=unit.X_eval)
@@ -387,7 +437,13 @@ class Pipeline:
                     fval = frozen[(mname, h)]
                     head = self.make_personal(h, hseed, variant,
                                               anchors.get(mname), pop_ridge)
-                    if isinstance(head, _PopAnchoredRidge):
+                    if isinstance(head, _ResidualHead):
+                        kw = ({"frozen_alpha": fval} if h in ALPHA_HEADS
+                              else {"frozen_lr": fval})
+                        head.fit(M_tr, unit.y_train,
+                                 X_raw=unit.X_train, **kw)
+                        p = head.predict(M_ev, X_raw=unit.X_eval)
+                    elif isinstance(head, _PopAnchoredRidge):
                         head.fit(M_tr, unit.y_train, X_raw=unit.X_train,
                                  frozen_alpha=fval)
                         p = head.predict(M_ev, X_raw=unit.X_eval)
@@ -397,8 +453,10 @@ class Pipeline:
                     else:
                         p = head.fit(M_tr, unit.y_train,
                                      frozen_lr=fval).predict(M_ev)
+                    edof = getattr(head, "effective_dof", float("nan"))
+                    eff_dof_val = edof() if callable(edof) else float(edof)
                     rows.append({**base, "mediator": mname, "head": h,
-                                 "eff_dof": head.effective_dof(),
+                                 "eff_dof": eff_dof_val,
                                  **evaluate(unit.y_eval, p)})
 
             if include_gt_upper_bound:
@@ -466,7 +524,6 @@ class Pipeline:
             for fold_idx in sorted(set(f for f, _ in tasks)):
                 f_count = sum(len(r) for (f, _), r in zip(tasks, results) if f <= fold_idx)
                 print(f"  fold {fold_idx} done ({f_count} rows)", flush=True)
-
         return pd.DataFrame(rows)
 
     def collect_user_heads(self, mediator: str = "emotion",
