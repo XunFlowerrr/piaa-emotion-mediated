@@ -229,12 +229,10 @@ class Pipeline:
             Dg = val_dist = None
 
         val_E = (Xv, Ev)
-        val_E8 = (Xv, np.column_stack([Ev, yv]))    # for the K+1-wide controls
 
         meds = build_shared_mediators(Xg, Eg, self.cfg, fold.index,
                                       want=want, seed=seed,
-                                      val=val_E, yg=yg, val8=val_E8,
-                                      Dg=Dg, val_dist=val_dist)
+                                      val=val_E, Dg=Dg, val_dist=val_dist)
         return Xg, Eg, yg, meds
 
     def val_data(self, fold, domain: str, feats):

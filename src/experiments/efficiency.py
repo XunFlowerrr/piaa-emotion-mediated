@@ -25,6 +25,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils.metrics import mean_sd, sem, wilcoxon_paired
+from src.utils.results_db import record
 
 #: mediators the sweep reports. Population is added by run_grid.
 MEDIATORS = ["identity", "pca", "emotion"]
@@ -61,6 +62,8 @@ def run(cfg, pipeline, n_list: list[int], variant: str | None = None,
                 seed=seed, stage2_variant=variant)
             d["n_train"], d["seed"], d["stage2_variant"] = n, seed, variant
             frames.append(d)
+            record(d, "efficiency", backbone=backbone or cfg.backbone,
+                   variant=variant, n_train=n)
 
     raw = pd.concat(frames, ignore_index=True)
     raw.to_csv(out_dir / f"per_unit{tag}_by_seed.csv", index=False)

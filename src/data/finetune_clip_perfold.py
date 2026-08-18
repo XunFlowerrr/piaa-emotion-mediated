@@ -116,7 +116,10 @@ def main():
     ap.add_argument("--images_dir", default="Dataset/sample")
     ap.add_argument("--split_dir", default="Dataset/split")
     ap.add_argument("--v4", action="store_true",
-                    help="use split_v4_10group (leak-free); --fold is 0-based")
+                    help="use the v4 group split (leak-free); --fold is 0-based")
+    ap.add_argument("--v4_split_dir", default="Dataset/split_v4_10group",
+                    help="where the v4 fold directories live; set this when "
+                         "running outside the repo root (e.g. on Kaggle)")
     ap.add_argument("--out", required=True)
     ap.add_argument("--epochs", type=int, default=8)
     ap.add_argument("--batch_size", type=int, default=12)
@@ -125,7 +128,14 @@ def main():
     ap.add_argument("--seed", type=int, default=42)
     args = ap.parse_args()
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
+    # mps is Apple silicon; it has no autocast/GradScaler support here, so the
+    # mixed-precision path below stays off for it and it trains in fp32
+    if torch.cuda.is_available():
+        device = "cuda"
+    elif getattr(torch.backends, "mps", None) and torch.backends.mps.is_available():
+        device = "mps"
+    else:
+        device = "cpu"
     torch.manual_seed(args.seed)
     tgt_cols = CORE7_RAW if args.target == "emotion" else ["Aesthetic"]
     missing = [c for c in tgt_cols if c not in pd.read_csv(
@@ -139,7 +149,7 @@ def main():
 
     if args.v4:
         # v4 leak-free: train users + GIAA images
-        fdir = Path("Dataset/split_v4_10group") / f"fold{args.fold}"
+        fdir = Path(args.v4_split_dir) / f"fold{args.fold}"
         gen = {int(x) for x in (fdir / "train_users.txt").read_text().split()}
         giaa = {str(x) for x in (fdir / "giaa_train_images.txt").read_text().split()}
     else:
@@ -186,7 +196,8 @@ def main():
 
     model = CLIPRegressor(len(tgt_cols)).to(device)
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=0.01)
-    scaler = torch.cuda.amp.GradScaler(enabled=(device == "cuda"))
+    amp = (device == "cuda")          # fp16 only on CUDA; mps/cpu run fp32
+    scaler = torch.amp.GradScaler("cuda", enabled=amp)
     lossf = nn.MSELoss()
 
     best, best_state = 1e9, None
@@ -195,7 +206,7 @@ def main():
         for px, y, _ in tqdm(tr_loader, desc=f"f{args.fold} ep{ep}"):
             px, y = px.to(device), y.to(device)
             opt.zero_grad()
-            with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+            with torch.amp.autocast("cuda", enabled=amp):
                 loss = lossf(model(px), y)
             scaler.scale(loss).backward(); scaler.step(opt); scaler.update()
             tl += loss.item() * len(px)
@@ -203,7 +214,7 @@ def main():
         with torch.no_grad():
             for px, y, _ in va_loader:
                 px, y = px.to(device), y.to(device)
-                with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+                with torch.amp.autocast("cuda", enabled=amp):
                     vl += lossf(model(px), y).item() * len(px)
         tl /= len(tr); vl /= max(1, n_val)
         print(f"Fold {args.fold} Ep {ep}: train_loss={tl:.4f} val_loss={vl:.4f}", flush=True)
@@ -223,7 +234,7 @@ def main():
     model.eval()
     with torch.no_grad():
         for px, _, idxb in tqdm(loader, desc=f"f{args.fold} extract"):
-            with torch.cuda.amp.autocast(enabled=(device == "cuda")):
+            with torch.amp.autocast("cuda", enabled=amp):
                 f = model(px.to(device), return_feat=True)
             feats[idxb.numpy()] = f.float().cpu().numpy()
     np.savez_compressed(args.out, stimulus_ids=np.array(allsid), features=feats)

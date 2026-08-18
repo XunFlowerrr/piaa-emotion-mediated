@@ -62,20 +62,17 @@ class Config:
     #   C      fit the head on the residual y - y_pop
     stage2_variant: str = "plain"
 
-    # Which mediators the variant applies to. Direct is in the list because
-    # otherwise Hybrid alone would carry the population prior and its edge over
-    # Direct would be a fact about the prior, not about the bottleneck. PCA is
-    # in it because it is a real alternative concept space, so it has to be
-    # compared to Hybrid on equal terms.
-    #
-    # Random and Shuffled are deliberately left out. Their whole job is to show
-    # that a mediator with no content buys nothing, and handing them the
-    # population prediction gives them content: measured at 100 ratings,
-    # Shuffled rises from .245 to .410 and Random from .197 to .390, both
-    # landing next to the population baseline (.416) purely on the borrowed
-    # prior. A control that scores like the population model is no longer
-    # controlling for anything.
-    stage2_variant_mediators: tuple = ("identity", "pca", "emotion")
+    # Which mediators the variant applies to. Hayashi's instruction is to
+    # apply it to every mediator, Random and Shuffled included: if only Hybrid
+    # (or only Hybrid/Direct/PCA) carried the population prior, any edge those
+    # rows show would be a fact about who got the prior, not about the
+    # mediator's own content. An earlier version of this list excluded Random
+    # and Shuffled on the reasoning that a content-free control "shouldn't
+    # benefit" from GIAA -- that reasoning was wrong: withholding the anchor
+    # from them is itself the confound the paper is trying to avoid, so every
+    # mediator gets the same treatment and the comparison stays about content.
+    stage2_variant_mediators: tuple = ("identity", "pca", "emotion",
+                                       "random", "shuffled")
 
     # MLP head
     mlp_hidden: int = 128

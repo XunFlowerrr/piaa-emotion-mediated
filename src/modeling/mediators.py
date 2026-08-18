@@ -117,8 +117,6 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
                            want: list[str] | None = None,
                            seed: int = 0,
                            val: tuple | None = None,
-                           yg: np.ndarray | None = None,
-                           val8: tuple | None = None,
                            Dg: dict | None = None,
                            val_dist: dict | None = None) -> dict[str, Mediator]:
     """Build every mediator from train-user data (population-level images).
@@ -141,18 +139,13 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
     K = cfg.mediator_width
     want = want or ["identity", "emotion", "pca", "random", "shuffled"]
 
-    # fixed RNG order: R first, then the permutation -- don't reorder.
-    # The width-matched controls need a K+1-wide projection, but drawing one
-    # here would shift every value after the first row (a (d,K+1) draw sliced
-    # to K is NOT a (d,K) draw -- the generator fills row-major), which would
-    # silently move the published random and shuffled numbers. The extra
-    # column is therefore drawn last, after everything that already existed.
+    # fixed RNG order: R first, then the permutation -- don't reorder, or the
+    # published random and shuffled numbers move even though nothing about
+    # the method did.
     rng_seed = fold_index if seed == 0 else fold_index + seed * 1_000_003
     rng = np.random.default_rng(rng_seed)
     R = rng.standard_normal((Xg.shape[1], K)) / np.sqrt(Xg.shape[1])
     perm = rng.permutation(len(Eg))
-    R_extra = rng.standard_normal((Xg.shape[1], 1)) / np.sqrt(Xg.shape[1])
-    R_full = np.hstack([R, R_extra])
 
     out: dict[str, Mediator] = {}
     if "identity" in want:
@@ -183,23 +176,5 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
             out[key] = EmotionMediator(
                 _shared_ridge(Xg, Dg[key], cfg.ridge_alphas,
                               (val_dist or {}).get(key)))
-
-    # --- width-matched controls -------------------------------------------
-    # Variant A gives Hybrid an 8th feature (the GIAA prediction), so a K-wide
-    # control is no longer the same shape as the thing it is controlling for.
-    # These are K+1 wide and carry no population prediction, which separates
-    # "the extra width helped" from "the GIAA prediction helped".
-    if "pca8" in want:
-        out["pca8"] = PCAMediator(PCA(n_components=K + 1, random_state=0).fit(Xg))
-    if "random8" in want:
-        out["random8"] = RandomMediator(R_full)
-    if "shuffled8" in want:
-        # shuffle the [emotions, mean score] block together, so all K+1
-        # outputs are real-looking values attached to the wrong images
-        if yg is None:
-            raise ValueError("shuffled8 needs yg (population mean score)")
-        target = np.column_stack([Eg, np.asarray(yg, float)])
-        out["shuffled8"] = ShuffledMediator(
-            _shared_ridge(Xg, target[perm], cfg.ridge_alphas, val8))
 
     return out

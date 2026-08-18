@@ -16,3 +16,5 @@ features/*
 
 # markdown files (Thai ver.)
 docs/*_THAI.md
+
+ืnotebooks/*

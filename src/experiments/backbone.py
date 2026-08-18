@@ -22,6 +22,7 @@ import pandas as pd
 
 from src.modeling.backbones import backbone_label
 from src.utils.metrics import mean_sd, sem, wilcoxon_paired
+from src.utils.results_db import record
 
 
 def common_stimuli(cfg, backbone_names: list[str]) -> set[str]:
@@ -62,6 +63,8 @@ def run(cfg, backbone_names: list[str], variant: str | None = None,
                            stage2_variant=variant)
         df["backbone"] = name
         frames.append(df)
+        record(df, "backbone", backbone=name, variant=variant,
+               n_train=cfg.n_train)
     allf = pd.concat(frames, ignore_index=True)
     allf.to_csv(out_dir / f"per_unit{tag}.csv", index=False)
 

@@ -23,6 +23,7 @@ import pandas as pd
 
 from src.data.data import DOMAINS
 from src.utils.metrics import mean_sd, plcc, sem, srocc, wilcoxon_paired
+from src.utils.results_db import record
 
 #: row order (mediator, head)
 ROWS = [
@@ -92,6 +93,8 @@ def run_one_seed(cfg, pipeline, seed: int, variant: str | None = None,
          f"per_unit{_tag(variant)}{_htag(heads)}{_mtag(mediators)}_seed{seed}.csv")
     d.to_csv(f, index=False)
     print(f"[table1] seed {seed} variant {variant} written ({len(d)} rows) -> {f.name}")
+    record(d, "table1", backbone=cfg.backbone, variant=variant,
+           n_train=cfg.n_train)
     return d
 
 
