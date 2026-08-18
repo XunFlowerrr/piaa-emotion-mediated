@@ -71,13 +71,19 @@ def load_efficiency() -> list[pd.DataFrame]:
     """backbone missing from the rows -> take it from the filename.
     head/n_train/seed/stage2_variant are already real per-row columns."""
     frames = []
-    for f in sorted((ROOT / "output" / "efficiency").glob("*_by_seed.csv")):
+    eff = ROOT / "output" / "efficiency"
+    # Both layouts: the flat per_unit*_by_seed.csv written before the
+    # reorganisation, and <backbone>/raw*.csv written after it. The backbone
+    # comes from the tag in the old layout and from the folder in the new
+    # one, so files that predate the change still load.
+    files = ([(f, None) for f in sorted(eff.glob("*_by_seed.csv"))]
+             + [(f, f.parent.name) for f in sorted(eff.glob("*/raw*.csv"))])
+    for f, folder_bb in files:
         stem = f.stem.removesuffix("_by_seed")
-        # per_unit[_variant][_head][_backbone]_by_seed.csv
-        tag = stem.removeprefix("per_unit")
+        tag = stem.removeprefix("per_unit").removeprefix("raw")
         cfg = parse_tag(tag)
         d = pd.read_csv(f)
-        d["backbone"] = cfg["backbone"]
+        d["backbone"] = folder_bb or cfg["backbone"]
         d = d.rename(columns={"stage2_variant": "variant"})
         frames.append(d[KEY + ["eff_dof", "ccc", "srocc", "plcc"]])
         print(f"  efficiency: {f.name:45s} {len(d):6d} rows -> backbone={cfg['backbone']}")

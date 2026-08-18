@@ -17,7 +17,8 @@ population formula on the emotion mediator "pop_zero"; neither matched Table
 case here: it asks at what support size a personalized model stops losing to
 the population model.
 
-Output: output/efficiency/per_unit{tag}.csv, summary{tag}.csv
+Output: output/efficiency/<backbone>/raw{tag}.csv, summary{tag}.csv
+(two files per run: the raw per-seed rows, and the reported summary)
 """
 from __future__ import annotations
 
@@ -56,7 +57,12 @@ def _tag(variant, heads, mediators, backbone) -> str:
 
 def run(cfg, pipeline, n_list: list[int], variant: str | None = None,
         heads=None, mediators=None, seeds=(0,), backbone=None) -> pd.DataFrame:
-    out_dir = cfg.run_dir("efficiency")
+    # One folder per backbone, so a finished set (4 variants x 4 support
+    # sizes x 3 seeds) sits together instead of 50-odd files sharing a flat
+    # directory with every other backbone.
+    bb = backbone or cfg.backbone
+    out_dir = cfg.run_dir("efficiency") / bb
+    out_dir.mkdir(parents=True, exist_ok=True)
     variant = variant or cfg.stage2_variant
     heads = list(heads or ["ridge"])
     mediators = list(mediators or MEDIATORS)
@@ -76,12 +82,17 @@ def run(cfg, pipeline, n_list: list[int], variant: str | None = None,
             record(d, "efficiency", backbone=backbone or cfg.backbone,
                    variant=variant, n_train=n)
 
+    # Two files per run and no more: the raw per-unit-per-seed rows, which
+    # every later table and figure can be rebuilt from, and the summary that
+    # is actually reported. The seed-averaged per-unit file that used to sit
+    # between them was never read by anything -- it is one groupby away from
+    # the raw file, and having it on disk mostly created doubt about which of
+    # the two was the real one.
     raw = pd.concat(frames, ignore_index=True)
-    raw.to_csv(out_dir / f"per_unit{tag}_by_seed.csv", index=False)
+    raw.to_csv(out_dir / f"raw{tag}.csv", index=False)
 
     key = ["n_train", "mediator", "head", "fold", "domain", "user_id"]
     df = raw.groupby(key, as_index=False)[["ccc", "srocc", "plcc", "eff_dof"]].mean()
-    df.to_csv(out_dir / f"per_unit{tag}.csv", index=False)
 
     summary = summarize(df, n_list)
     summary.to_csv(out_dir / f"summary{tag}.csv", index=False)
