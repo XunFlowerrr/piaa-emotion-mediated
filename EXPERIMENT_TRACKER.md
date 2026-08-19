@@ -26,6 +26,7 @@ This document provides a chronological record of all experiment suites, their su
 | **5** | `sassy_dragon` | `COMPLETED (5/5)` | `output/sassy_dragon/` (`output/sassy_dragon/sassy_dragon_all_runs.zip`) | Multimodal Distributional (1A–1C) & MLP Joint (2A–2B) Bottleneck Suite (Anchor C) |
 | **6** | `radiant_phoenix` | `COMPLETED (2/2)` | `output/radiant_phoenix/` (`output/radiant_phoenix/radiant_phoenix_all_runs.zip`) | Qwen Vision-Language (8B & 4B) Joint vs Sequential Bottleneck Suite (Anchor C) |
 | **7** | `emerald_tiger` | `COMPLETED (13/13)` | `output/emerald_tiger/` (`output/emerald_tiger/emerald_tiger_all_runs.zip`) | Comprehensive 13-Step Multimodal Backbone & Mediator Flattened Sweep (Anchor C) |
+| **8** | `silver_falcon` | `PENDING (0/5)` | `output/silver_falcon/` (`output/silver_falcon/silver_falcon_all_runs.zip`) | Standard Stage-2 Controls Sweep (identity, pca, emotion, random, shuffled) across 5 Backbones (Anchor C) |
 
 ---
 
