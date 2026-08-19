@@ -16,9 +16,10 @@ This skill provides a comprehensive, battle-tested standard operating procedure 
    * Flatten every multidimensional parameter combination into discrete, sequentially indexed, individually addressable `SuiteStep`s.
    * Enables selective re-runs, independent failure isolation, and transparent progress tracking.
 
-2. **Autonomous Coolname Slug Generation:**
-   * Always generate clean, memorable 2-word slug codenames using `coolname` (e.g., `sassy_dragon`, `radiant_phoenix`, `emerald_tiger`).
-   * Never use arbitrary or ad-hoc names unless explicitly requested by the user.
+2. **Strict Programmatic Coolname Slug Generation (Never Manually Invent):**
+   * Must ALWAYS execute the `coolname` library programmatically via Python (`uv run python -c "import coolname; ..."`) to generate candidates.
+   * NEVER invent, guess, hardcode, or manually create codenames. Always sample true random 2-word combinations from `coolname.generate_slug(2).replace("-", "_")`.
+   * Present 5–8 freshly generated candidate slugs directly from the library output.
 
 3. **Strict Plan-Before-Execution Review:**
    * Always present a formatted Markdown table outlining all steps, categories, backbones, mediators, parameters, and output folders for user review **before** creating files or executing code.
@@ -35,12 +36,16 @@ This skill provides a comprehensive, battle-tested standard operating procedure 
 
 When a user requests a set of commands or a parameter sweep, structure the plan as follows:
 
-### 2.1 Name Selection
-Generate 3–5 curated `coolname` candidate slugs:
-```python
+### 2.1 Name Selection via Python CLI
+Execute this exact command to sample genuine random slugs from the library:
+```bash
+uv run python -c "
 import coolname
-slug = coolname.generate_slug(2).replace("-", "_")
+for _ in range(8):
+    print(' •', coolname.generate_slug(2).replace('-', '_'))
+"
 ```
+
 
 ### 2.2 Sub-run Codename & Folder Convention
 Use the standard prefix pattern: `<id>_<category>-<backbone>`
