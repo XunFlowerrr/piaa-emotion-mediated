@@ -13,15 +13,15 @@ Dataset/*.zip
 
 # feature extracted from VLM (overbig)
 features/*
-
-# markdown files (Thai ver.)
 docs/*_THAI.md
-
 notebooks/*
-
 # Large zip archives and artifacts
 *.zip
 archive/artifact/
 
 # Duplicate reruns kept for comparison, not part of the reported results
 output/_duplicate_runs/
+
+# Quarantined results and features: kept for reference, never read by code
+no_use/
+
