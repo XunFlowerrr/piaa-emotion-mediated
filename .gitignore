@@ -13,15 +13,8 @@ Dataset/*.zip
 
 # feature extracted from VLM (overbig)
 features/*
-
-# markdown files (Thai ver.)
 docs/*_THAI.md
-
 notebooks/*
-
-# Kaggle upload bundle: ~900 MB, rebuilt by src/data/make_kaggle_bundle.py
-*_kaggle_bundle.zip
-piaa_kaggle_bundle.zip
-
-# Duplicate reruns kept for comparison, not part of the reported results
-output/_duplicate_runs/
+no_use/*
+# Quarantined results and features: kept for reference, never read by code
+no_use/
