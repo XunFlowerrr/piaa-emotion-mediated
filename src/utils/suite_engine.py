@@ -168,29 +168,57 @@ def render_suite_table(suite: Suite):
         print("=" * 90)
 
 
-def package_suite_zip(suite: Suite):
-    """Package all output files for a suite into a zip archive."""
-    suite_dir = suite.output_dir
+def package_suite_zip(suite: Suite, from_modal: bool = False):
+    """Package all output files for a suite into a zip archive.
+
+    If from_modal is True:
+        Packages files from output/<suite_name>/modal/ (or fallback to output/<suite_name>/).
+        The internal archive structure is clean: <suite_name>/<step_folder>/...
+        WITHOUT any 'modal/' subdirectory inside the zip archive!
+        Archive target: output/<suite_name>/<suite_name>_modal_all_runs.zip
+    If from_modal is False:
+        Packages files from output/<suite_name>/ (excluding the modal/ directory).
+        Archive target: output/<suite_name>/<suite_name>_all_runs.zip
+    """
+    if from_modal:
+        modal_dir = suite.output_dir / "modal"
+        suite_dir = modal_dir if modal_dir.exists() else suite.output_dir
+        zip_path = suite.output_dir / f"{suite.name}_modal_all_runs.zip"
+        mode_label = "MODAL CLOUD (stripped 'modal/' subfolder)"
+    else:
+        suite_dir = suite.output_dir
+        zip_path = suite.zip_path
+        mode_label = "LOCAL (excluding 'modal/' subfolder)"
+
     if not suite_dir.exists():
-        print(f"Error: Suite directory '{suite_dir.relative_to(ROOT)}' does not exist yet.")
+        print(f"Error: Directory '{suite_dir.relative_to(ROOT)}' does not exist yet.")
         sys.exit(1)
 
-    files_to_zip = [p for p in suite_dir.rglob("*") if p.is_file() and not p.name.startswith(".") and p.suffix != ".zip"]
+    raw_files = [p for p in suite_dir.rglob("*") if p.is_file() and not p.name.startswith(".") and p.suffix != ".zip"]
+
+    files_to_zip = []
+    for p in raw_files:
+        rel = p.relative_to(suite_dir)
+        # If packaging local outputs, ignore files inside modal/ subdirectory
+        if not from_modal and "modal" in rel.parts:
+            continue
+        files_to_zip.append((p, rel))
+
     if not files_to_zip:
         print(f"Warning: No output files found in '{suite_dir.relative_to(ROOT)}/'. Nothing to zip.")
         sys.exit(0)
 
-    zip_path = suite.zip_path
     zip_path.parent.mkdir(parents=True, exist_ok=True)
     print("=" * 80)
     print(f"CREATING CONSOLIDATED ARCHIVE: {zip_path.name}")
+    print(f"Mode:          {mode_label}")
     print(f"Source Folder: {suite_dir.relative_to(ROOT)}/ ({len(files_to_zip)} file(s))")
     print(f"Destination:   {zip_path.relative_to(ROOT)}")
     print("=" * 80)
 
     with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file_path in files_to_zip:
-            arcname = file_path.relative_to(OUTPUT_DIR)
+        for file_path, rel_path in files_to_zip:
+            arcname = f"{suite.name}/{rel_path}"
             zf.write(file_path, arcname=str(arcname))
             print(f"  [+] Compressed: {arcname}")
 
@@ -340,7 +368,7 @@ def run_suite_cli(suite: Suite):
         return
 
     if args.zip:
-        package_suite_zip(suite)
+        package_suite_zip(suite, from_modal=args.modal)
         return
 
     if args.all:

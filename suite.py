@@ -183,6 +183,7 @@ def main():
     # zip
     p_zip = sub.add_parser("zip", help="Package a suite's output files into a zip archive")
     p_zip.add_argument("suite_name", type=str, help="Name of the suite to zip")
+    p_zip.add_argument("--modal", "-m", action="store_true", help="Package Modal Cloud outputs (excluding 'modal/' subfolder in zip)")
 
     # new
     p_new = sub.add_parser("new", help="Create a new experiment suite and generate its runner")
@@ -214,7 +215,7 @@ def main():
         if not suite:
             print(f"Error: Suite '{args.suite_name}' not found.")
             sys.exit(1)
-        package_suite_zip(suite)
+        package_suite_zip(suite, from_modal=args.modal)
     elif args.command == "new":
         create_new_suite(custom_name=args.name, title=args.title)
 
