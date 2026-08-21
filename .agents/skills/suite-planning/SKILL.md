@@ -139,7 +139,11 @@ uv run run_<name>.py --run 1,3
 uv run run_<name>.py --run 1_base
 uv run run_<name>.py --run joint-qwen8b
 
-# 4. Package all output files into a clean consolidated zip
+# 4. Run on Modal Serverless (32-Core CPU Containers in Cloud)
+uv run run_<name>.py --all --modal
+uv run run_<name>.py --run 1_base --modal
+
+# 5. Package all output files into a clean consolidated zip
 uv run run_<name>.py --zip
 ```
 
