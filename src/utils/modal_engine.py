@@ -118,7 +118,7 @@ def run_suite_steps_modal(suite, steps_to_run):
 
     from src.utils.suite_engine import play_sound
 
-    suite_dir = suite.output_dir
+    suite_dir = suite.output_dir / "modal"
     suite_dir.mkdir(parents=True, exist_ok=True)
     total_start = time.time()
 

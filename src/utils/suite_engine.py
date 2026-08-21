@@ -63,14 +63,19 @@ def snapshot_output(suite_name: str) -> dict[Path, float]:
 
 
 def check_step_status(suite: Suite, step: SuiteStep) -> tuple[bool, list[str]]:
-    """Check if a step has completed results inside output/<suite_name>/<folder>/."""
-    target_dir = suite.output_dir / step.folder
-    if not target_dir.exists():
-        target_dir = suite.output_dir / step.codename
-    if target_dir.exists():
-        files = sorted([f.name for f in target_dir.glob("*.csv")])
-        if files:
-            return True, [f"{suite.name}/{target_dir.name}/{f}" for f in files]
+    """Check if a step has completed results inside output/<suite_name>/<folder>/ or output/<suite_name>/modal/<folder>/."""
+    candidates = [
+        suite.output_dir / step.folder,
+        suite.output_dir / "modal" / step.folder,
+        suite.output_dir / step.codename,
+        suite.output_dir / "modal" / step.codename,
+    ]
+    for target_dir in candidates:
+        if target_dir.exists():
+            files = sorted([f.name for f in target_dir.glob("*.csv")])
+            if files:
+                rel_path = target_dir.relative_to(OUTPUT_DIR)
+                return True, [f"{rel_path}/{f}" for f in files]
     return False, []
 
 
