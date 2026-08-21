@@ -24,7 +24,7 @@ if HAS_MODAL:
     # 1. Define Modal App
     app = modal.App(name="piaa-emotion-mediated")
 
-    # 2. Define Container Image with all required scientific dependencies
+    # 2. Define Container Image with all required scientific dependencies and mounted project files
     image = (
         modal.Image.debian_slim(python_version="3.11")
         .pip_install(
@@ -38,6 +38,10 @@ if HAS_MODAL:
             "coolname>=5.0.0",
             "joblib>=1.3.0",
         )
+        .add_local_dir(str(ROOT / "src"), remote_path="/root/project/src")
+        .add_local_dir(str(ROOT / "Dataset"), remote_path="/root/project/Dataset")
+        .add_local_dir(str(ROOT / "features"), remote_path="/root/project/features")
+        .add_local_file(str(ROOT / "main.py"), remote_path="/root/project/main.py")
     )
 
     # 3. Remote Serverless Function (64 Cores, 64 GB RAM)
@@ -46,12 +50,6 @@ if HAS_MODAL:
         cpu=64.0,
         memory=65536,
         timeout=3600,
-        mounts=[
-            modal.Mount.from_local_dir(ROOT / "src", remote_path="/root/project/src"),
-            modal.Mount.from_local_dir(ROOT / "Dataset", remote_path="/root/project/Dataset"),
-            modal.Mount.from_local_dir(ROOT / "features", remote_path="/root/project/features"),
-            modal.Mount.from_local_file(ROOT / "main.py", remote_path="/root/project/main.py"),
-        ],
     )
     def run_step_remote(cmd_args: list[str]) -> tuple[int, str, dict[str, bytes]]:
         """Run an experiment step inside Modal's 64-core container and return generated files."""
