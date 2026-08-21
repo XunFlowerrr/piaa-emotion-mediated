@@ -1,0 +1,25 @@
+\begin{tabular}{llc cc cc cc cc}
+\toprule
+\multirow{2}{*}{Mediator} & \multirow{2}{*}{Stage 2} & \multirow{2}{*}{eff.\ DoF} &
+\multicolumn{2}{c}{Art} & \multicolumn{2}{c}{Fashion} & \multicolumn{2}{c}{Landscape} & \multicolumn{2}{c}{Average} \\
+\cmidrule(lr){4-5}\cmidrule(lr){6-7}\cmidrule(lr){8-9}\cmidrule(lr){10-11}
+ & & & SROCC & PLCC & SROCC & PLCC & SROCC & PLCC & SROCC & PLCC \\
+\midrule
+\multicolumn{11}{l}{\textit{No personalization (GIAA)}}\\
+Population (GIAA) & --- & \na & $.477_{\pm .017}^\dagger$ & $.487_{\pm .017}^\dagger$ & $.372_{\pm .013}^\dagger$ & $.384_{\pm .013}^\dagger$ & $.469_{\pm .015}^\dagger$ & $.475_{\pm .014}^\dagger$ & $.439_{\pm .009}^\dagger$ & $.449_{\pm .009}^\dagger$ \\
+\addlinespace
+\multicolumn{11}{l}{\textit{No mediator}}\\
+Direct & Ridge & 13.3 & $\bm{.534_{\pm .014}}^\dagger$ & $\bm{.542_{\pm .014}}^\dagger$ & $\bm{.398_{\pm .013}}^\dagger$ & $\bm{.412_{\pm .013}}^\dagger$ & $\bm{.501_{\pm .015}}^\dagger$ & $\bm{.510_{\pm .015}}^\dagger$ & $\bm{.478_{\pm .009}}^\dagger$ & $\bm{.488_{\pm .008}}^\dagger$ \\
+\addlinespace
+\multicolumn{11}{l}{\textit{Content-free mediator}}\\
+Random & Ridge & 2.5 & $.495_{\pm .015}^\dagger$ & $.504_{\pm .015}^\dagger$ & $.373_{\pm .013}^\dagger$ & $.384_{\pm .012}^\dagger$ & $.473_{\pm .014}^\dagger$ & $.480_{\pm .014}^\dagger$ & $.447_{\pm .009}^\dagger$ & $.456_{\pm .008}^\dagger$ \\
+\addlinespace
+\multicolumn{11}{l}{\textit{Compressed mediator}}\\
+PCA & Ridge & 4.2 & $.510_{\pm .015}$ & $.519_{\pm .015}$ & $.377_{\pm .014}$ & $.388_{\pm .013}$ & $.487_{\pm .015}$ & $.495_{\pm .015}$ & $.458_{\pm .009}$ & $.467_{\pm .009}$ \\
+\addlinespace
+\multicolumn{11}{l}{\textit{Emotion bottleneck (ours)}}\\
+Hybrid, ridge $\rightarrow$ ridge & Ridge & 3.5 & $.496_{\pm .016}$ & $.504_{\pm .016}$ & $.386_{\pm .014}$ & $.398_{\pm .013}$ & $.496_{\pm .015}$ & $.504_{\pm .015}$ & $.459_{\pm .009}$ & $.469_{\pm .009}$ \\
+Hybrid, MLP $\rightarrow$ MLP sequential & MLP & \na & $.495_{\pm .015}^\dagger$ & $.504_{\pm .016}^\dagger$ & $.366_{\pm .014}^\dagger$ & $.377_{\pm .013}^\dagger$ & $.482_{\pm .015}^\dagger$ & $.493_{\pm .014}^\dagger$ & $.448_{\pm .009}^\dagger$ & $.458_{\pm .009}^\dagger$ \\
+Hybrid, MLP $\rightarrow$ MLP joint & MLP & \na & $.500_{\pm .015}^\dagger$ & $.509_{\pm .015}^\dagger$ & $.380_{\pm .013}^\dagger$ & $.389_{\pm .013}^\dagger$ & $.482_{\pm .015}^\dagger$ & $.494_{\pm .015}^\dagger$ & $.454_{\pm .009}^\dagger$ & $.464_{\pm .009}^\dagger$ \\
+\bottomrule
+\end{tabular}
