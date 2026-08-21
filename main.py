@@ -6,7 +6,6 @@ Examples:
     uv run main.py backbone --backbones clip,clip_ft,qwen4b,qwen8b
     uv run main.py efficiency --n-train 10,25,50,100
     uv run main.py faithfulness
-    uv run main.py mlp_diagnostics
 
 Every command writes to output/<experiment name>/, always with a config.json next to it.
 """
@@ -52,10 +51,10 @@ def main(argv=None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("experiment",
                     choices=["table1", "backbone", "efficiency", "faithfulness",
-                            "mlp_diagnostics", "stage1_emotion_acc",
+                            "stage1_emotion_acc",
                             "stage2_emotion_importance", "fig_faithfulness",
                             "fig_efficiency", "verify"])
-    ap.add_argument("--backbone", default="clip", help="default: clip")
+    ap.add_argument("--backbone", default="qwen8b", help="default: qwen8b")
     ap.add_argument("--backbones", default="clip,clip_ft,qwen4b,qwen8b")
     ap.add_argument("--n-train", default="10,25,50,100")
     ap.add_argument("--all-sessions", action="store_true",
@@ -83,10 +82,15 @@ def main(argv=None) -> int:
                          "emotion_sd (14 wide) and emotion_hist (35 wide) are "
                          "the distribution-valued Stage-1 variants.")
     ap.add_argument("--heads", default=None,
-                    help="table1: comma-separated heads to run, e.g. --heads mlp "
-                         "to recompute only the MLP rows. A partial run writes "
+                    help="table1: comma-separated heads to run. "
+                         "A partial run writes "
                          "per_unit*_<h>_seed*.csv and leaves the full run's "
                          "files untouched; merge with merge_table1.py")
+    ap.add_argument("--folds", default=None,
+                    help="efficiency: run only these fold indices, e.g. "
+                         "--folds 0,1. Folds are independent, so this is how "
+                         "one seed is spread over cores; merge the resulting "
+                         "raw*.csv files with src/utils/tools/ingest_runs.py")
     ap.add_argument("--output-dir", default=None)
     ap.add_argument("-j", "--jobs", type=int, default=None,
                     help="number of parallel CPU jobs (-1 for all cores, 1 for serial)")
@@ -155,13 +159,12 @@ def main(argv=None) -> int:
                        mediators=args.mediators.split(",") if args.mediators else None,
                        backbone=args.backbone,
                        seeds=([int(x) for x in str(args.seed).split(",")]
-                              if args.seed is not None else (0,)))
+                              if args.seed is not None else (0,)),
+                       folds=([int(x) for x in args.folds.split(",")]
+                              if args.folds else None))
     elif args.experiment == "faithfulness":
         from src.experiments import faithfulness
         faithfulness.run(cfg, pipe)
-    elif args.experiment == "mlp_diagnostics":
-        from src.experiments import mlp_diagnostics
-        mlp_diagnostics.run(cfg, pipe)
     elif args.experiment == "stage1_emotion_acc":
         from src.experiments import stage1_emotion_acc
         stage1_emotion_acc.run(cfg, pipe)

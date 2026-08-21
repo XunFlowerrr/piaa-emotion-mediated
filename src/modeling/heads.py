@@ -1,12 +1,14 @@
 """Head = maps "mediator output" to "this user's beauty score".
 
-The head is the one layer that's personal to a user. Two kinds:
+The head is the one layer that's personal to a user. Three kinds:
 
-  RidgeHead - linear, interpretable (7 weights = that user's formula).
-  MLPHead   - nonlinear, single hidden layer of 128 units, MSE loss, no L2.
+  RidgeHead        linear, interpretable (7 weights = that user's formula)
+  SparseLinearHead lasso / elastic net -- linear, and can zero a coefficient
+  MLPHead          one hidden layer of cfg.mlp_hidden units, the predictor
+                   half of the MLP series
 
-Both train **sequentially**: the mediator is fit and frozen first, then the
-head is fit on whatever the mediator outputs. Not end-to-end.
+They all train **sequentially**: the mediator is fit and frozen first, then
+the head is fit on whatever the mediator outputs. Not end-to-end.
 
 *** where hyperparameters come from ***
 Both `fit` methods take an optional `val=(X_val, y_val)`, and that decides
@@ -26,7 +28,6 @@ from abc import ABC, abstractmethod
 
 import numpy as np
 from sklearn.linear_model import Ridge, RidgeCV
-from sklearn.neural_network import MLPRegressor
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
@@ -137,89 +138,6 @@ class RidgeHead(Head):
         return self._pipe[-1].coef_.ravel().copy()
 
 
-class MLPHead(Head):
-    """Single hidden layer of 128 units, MSE loss, no L2.
-
-    Trains for a fixed cfg.mlp_max_iter epochs; early_stopping is off.
-    early_stopping=True carves an internal validation_fraction split out of
-    whatever M it's given, and at a support size of 10 that split is 1-2
-    samples -- not a usable stopping signal, and it silently shrinks the data
-    the fit actually sees. A fixed epoch count is a stated, identical budget
-    for every unit instead. (Previously used early_stopping to stop before
-    100-sample support sets memorized the data; that overfitting risk is now
-    compensated by choosing lr on the validation group rather than by
-    per-unit early stopping. See docs/METHODOLOGY.md.)
-    """
-
-    name = "mlp"
-    is_linear = False
-
-    def __init__(self, cfg, seed: int = 0):
-        self.cfg = cfg
-        self.seed = int(seed)
-        self._pipe = None
-        self.best_lr_: float | None = None
-
-    def _make(self, lr: float):
-        return make_pipeline(StandardScaler(), MLPRegressor(
-            hidden_layer_sizes=(self.cfg.mlp_hidden,),
-            activation="relu",
-            alpha=self.cfg.mlp_alpha,
-            solver="adam",
-            learning_rate_init=lr,
-            max_iter=self.cfg.mlp_max_iter,
-            early_stopping=self.cfg.mlp_early_stopping,
-            validation_fraction=self.cfg.mlp_validation_fraction,
-            n_iter_no_change=self.cfg.mlp_n_iter_no_change,
-            random_state=self.seed,
-        ))
-
-    def fit(self, M, y, val=None, frozen_lr=None):
-        """frozen_lr, if given, skips the lr search entirely -- same role as
-        RidgeHead's frozen_alpha (see Pipeline.select_personal_hyperparam)."""
-        M = np.asarray(M, float)
-        y = np.asarray(y, float)
-
-        if frozen_lr is not None:
-            best_lr = float(frozen_lr)
-        elif val is None:
-            # personal head: hold out part of this user's own support set
-            n = len(M)
-            rng = np.random.RandomState(self.seed)
-            idx = rng.permutation(n)
-            nv = max(10, int(self.cfg.mlp_search_val_frac * n))
-            va, tr = idx[:nv], idx[nv:]
-            M_tr, y_tr, M_va, y_va = M[tr], y[tr], M[va], y[va]
-            best_lr = self._search(M_tr, y_tr, M_va, y_va)
-        else:
-            # shared component: score on the held-out validation user group
-            M_va, y_va = np.asarray(val[0], float), np.asarray(val[1], float)
-            best_lr = self._search(M, y, M_va, y_va)
-
-        self.best_lr_ = float(best_lr)
-        self._pipe = self._make(best_lr)
-        self._pipe.fit(M, y)
-        return self
-
-    def _search(self, M_tr, y_tr, M_va, y_va) -> float:
-        # same tie-break spirit as select_alpha_on_val: don't let the last few
-        # bits of a platform-dependent MSE pick the learning rate. Ties within
-        # ALPHA_TIE_RTOL go to the smallest lr (mlp_lr_grid is ascending),
-        # since a smaller step is the more conservative, less divergence-prone
-        # choice -- the MLP analogue of "the stronger penalty" for ridge.
-        grid = np.asarray(self.cfg.mlp_lr_grid, float)
-        mses = np.empty(len(grid))
-        for i, lr in enumerate(grid):
-            m = self._make(float(lr))
-            m.fit(M_tr, y_tr)
-            mses[i] = np.mean((m.predict(M_va) - y_va) ** 2)
-        tied = mses <= mses.min() * (1.0 + ALPHA_TIE_RTOL)
-        return float(grid[tied][0])
-
-    def predict(self, M):
-        return self._pipe.predict(M)
-
-
 class SparseLinearHead(Head):
     """Lasso / ElasticNet personal head -- linear like ridge, but it can set a
     coefficient to exactly zero.
@@ -297,8 +215,111 @@ class SparseLinearHead(Head):
         return self._pipe[-1].coef_.ravel().copy()
 
 
+def mlp_grid(cfg):
+    """Every (learning rate, weight decay) pair the MLP is selected over.
+
+    One grid, used for both stages, so "the MLP's hyperparameters" means the
+    same thing in the extractor and in the predictor. Ordered lr-major and
+    ascending in both, which is what the tie-break in
+    Pipeline.select_personal_hyperparam assumes.
+    """
+    return tuple((float(lr), float(a))
+                 for lr in cfg.mlp_lr_grid for a in cfg.mlp_alpha_grid)
+
+
+def make_mlp(cfg, lr, alpha, seed: int, scale: bool = True):
+    """The one place an MLP is constructed, so the extractor and the predictor
+    cannot drift apart.
+
+    early_stopping=False removes the internal 85/15 split, which on a support
+    set of 10 ratings would leave one or two validation samples and no usable
+    stopping signal. tol=0 with n_iter_no_change=max_iter removes the *other*
+    way sklearn stops early -- a training-loss plateau -- so every MLP really
+    does train for the same fixed number of epochs.
+    """
+    from sklearn.neural_network import MLPRegressor
+
+    net = MLPRegressor(
+        hidden_layer_sizes=(int(cfg.mlp_hidden),), activation="relu",
+        solver="adam", alpha=float(alpha), learning_rate_init=float(lr),
+        max_iter=int(cfg.mlp_max_iter), early_stopping=False,
+        tol=0.0, n_iter_no_change=int(cfg.mlp_max_iter),
+        random_state=int(seed))
+    return make_pipeline(StandardScaler(), net) if scale else net
+
+
+class MLPHead(Head):
+    """Personal predictor: mediator output -> one score, one hidden layer.
+
+    Its hyperparameter is the (learning rate, weight decay) pair, and it is
+    *not* chosen here. Pipeline.select_personal_hyperparam freezes one pair
+    per (fold, domain, mediator, n_train) on the validation user group and
+    passes it in as `frozen_hp`, exactly the way the ridge penalty arrives as
+    `frozen_alpha`. Choosing it from the user's own support set is the
+    behaviour the reviewer asked us to remove, so fit() refuses to run
+    without a frozen pair rather than quietly falling back to it.
+
+    `scale=False` is for the anchored case, where the training-group scaler
+    has already been applied by _ResidualHead and standardizing a second time
+    inside the head would put this row in different units from the ridge row
+    beside it.
+    """
+
+    name = "mlp"
+    is_linear = False
+
+    def __init__(self, cfg, seed: int = 0, scale: bool = True):
+        self.cfg, self.seed, self.scale = cfg, int(seed), bool(scale)
+        self.model = None
+        self._hp = (np.nan, np.nan)
+
+    def fit(self, M, y, val=None, frozen_hp=None, **_):
+        if frozen_hp is None:
+            if val is None:
+                raise ValueError(
+                    "MLPHead needs a (learning rate, weight decay) pair frozen "
+                    "on the validation group; it must not choose one from the "
+                    "user's own support set")
+            frozen_hp = self._select_on_val(M, y, val)
+        lr, alpha = frozen_hp
+        self._hp = (float(lr), float(alpha))
+        self.model = make_mlp(self.cfg, lr, alpha, self.seed, self.scale)
+        self.model.fit(M, np.asarray(y, float).ravel())
+        return self
+
+    def _select_on_val(self, M, y, val):
+        """Shared-component path: the GIAA head is fit on the training group
+        and scored on the validation group, the same rule select_alpha_on_val
+        applies to the ridge GIAA head."""
+        Mv, yv = val
+        grid = mlp_grid(self.cfg)
+        mses = np.array([
+            np.mean((make_mlp(self.cfg, lr, a, self.seed, self.scale)
+                     .fit(M, np.asarray(y, float).ravel()).predict(Mv)
+                     - np.asarray(yv, float).ravel()) ** 2)
+            for lr, a in grid])
+        return conservative_mlp_hp(
+            [g for g, m in zip(grid, mses) if m <= mses.min() * (1.0 + ALPHA_TIE_RTOL)])
+
+    def predict(self, M):
+        return np.asarray(self.model.predict(M), float).ravel()
+
+    @property
+    def hp_(self) -> tuple:
+        return self._hp
+
+
+def conservative_mlp_hp(tied):
+    """Break a tie among (lr, weight decay) pairs the same way
+    select_alpha_on_val breaks one among ridge penalties: toward the more
+    regularized model. Here that is the smallest step and the strongest decay.
+    """
+    return min(tied, key=lambda c: (c[0], -c[1]))
+
+
 #: heads whose hyperparameter is a penalty passed as `frozen_alpha`
-#: (everything except the MLP, which takes `frozen_lr`)
+#: (everything except the MLP, whose candidate is an (lr, decay) pair and
+#: arrives as `frozen_hp`)
 ALPHA_HEADS = ("ridge", "lasso", "elastic")
 
 
@@ -308,14 +329,16 @@ def head_grid(kind: str, cfg):
         return cfg.ridge_alphas
     if kind in ("lasso", "elastic"):
         return cfg.sparse_alphas
-    return cfg.mlp_lr_grid
+    if kind == "mlp":
+        return mlp_grid(cfg)
+    raise KeyError(f"unknown head '{kind}' (have: ridge, lasso, elastic, mlp)")
 
 
-def make_head(kind: str, cfg, seed: int = 0) -> Head:
+def make_head(kind: str, cfg, seed: int = 0, scale: bool = True) -> Head:
     if kind == "ridge":
         return RidgeHead(cfg.ridge_alphas)
-    if kind == "mlp":
-        return MLPHead(cfg, seed=seed)
     if kind in ("lasso", "elastic"):
         return SparseLinearHead(kind, cfg)
+    if kind == "mlp":
+        return MLPHead(cfg, seed=seed, scale=scale)
     raise KeyError(f"unknown head '{kind}' (have: ridge, lasso, elastic, mlp)")

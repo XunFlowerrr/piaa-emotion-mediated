@@ -54,6 +54,174 @@ def _shared_ridge(Xg, Yg, alphas, val=None):
     return m
 
 
+def _shared_mlp(Xg, Yg, cfg, seed, val):
+    """Stage-1 as a one-hidden-layer MLP, hyperparameters from the val group.
+
+    Deliberately the same shape as _shared_ridge: fit on the training group,
+    score MSE on the held-out validation users, break ties toward the more
+    regularized model, refit the winner. The learning rate and weight decay
+    are selected together, because a network with more parameters than
+    samples is decided by its penalty, and tuning ridge's penalty over 17
+    values while leaving the MLP's fixed would put a handicap in the table
+    and call it a model family.
+    """
+    from src.modeling.heads import ALPHA_TIE_RTOL, conservative_mlp_hp, make_mlp, mlp_grid
+
+    if val is None:
+        raise ValueError("a Stage-1 MLP needs the validation group")
+    Xv, Yv = val
+    grid = mlp_grid(cfg)
+    mses = np.array([np.mean((make_mlp(cfg, lr, a, seed).fit(Xg, Yg).predict(Xv) - Yv) ** 2)
+                     for lr, a in grid])
+    lr, alpha = conservative_mlp_hp(
+        [g for g, m in zip(grid, mses) if m <= mses.min() * (1.0 + ALPHA_TIE_RTOL)])
+    return make_mlp(cfg, lr, alpha, seed).fit(Xg, Yg)
+
+
+class _JointNet:
+    """features -> h -> 7 concepts -> 1 score, trained under one loss:
+
+        L = MSE(concepts)/2 + w * MSE(score)/2 + L2 penalty
+
+    Koh et al.'s *joint* concept bottleneck, at the population level. The
+    score head reads the seven concepts, not the hidden layer, so the score
+    gradient is forced through the bottleneck -- that is what makes it joint.
+    Hanging the score head off the hidden layer instead would shape the trunk
+    while leaving the seven concepts under emotion supervision alone, which
+    is sequential training wearing a joint label.
+
+    Joint here means joint across the two *shared* stages, not end-to-end
+    into the personal head. It is fit on the training group and frozen, like
+    every other Stage-1, and never on a test user's own ratings: a per-user
+    Stage-1 would be d*h weights fitted from ~100 samples, and the
+    seven-parameters-per-user claim the paper makes would be gone.
+
+    Hand-written because sklearn cannot express a head that reads the
+    bottleneck and torch is not a dependency here. Initialization,
+    minibatching, the Adam constants and the L2 convention all follow
+    sklearn's MLPRegressor, so "500 epochs at this learning rate and weight
+    decay" means the same thing in this row as in the sequential row beside
+    it. `predict` returns the seven concepts, so EmotionMediator wraps it
+    unchanged and Stage-2 cannot tell the two apart.
+    """
+
+    B1, B2, EPS, BATCH = 0.9, 0.999, 1e-8, 200
+
+    def __init__(self, d_in, h, k, lr, alpha, w_score, max_iter, seed):
+        rng = np.random.RandomState(int(seed))
+        self.W1 = self._init(rng, d_in, h)
+        self.b1 = np.zeros(h)
+        self.W2 = self._init(rng, h, k)
+        self.b2 = np.zeros(k)
+        self.v = self._init(rng, k, 1).ravel()
+        self.c0 = 0.0
+        self.lr, self.alpha, self.w = float(lr), float(alpha), float(w_score)
+        self.iters, self.rng = int(max_iter), rng
+        self.mu = self.sd = None
+
+    @staticmethod
+    def _init(rng, fan_in, fan_out):
+        """sklearn's Glorot-uniform bound, so both MLP rows start alike."""
+        b = np.sqrt(6.0 / (fan_in + fan_out))
+        return rng.uniform(-b, b, (fan_in, fan_out))
+
+    #: penalized parameters follow sklearn: weights yes, intercepts no
+    WEIGHTS = ("W1", "W2", "v")
+    PARAMS = ("W1", "b1", "W2", "b2", "v", "c0")
+
+    def _forward(self, Z):
+        H = np.maximum(Z @ self.W1 + self.b1, 0.0)
+        C = H @ self.W2 + self.b2
+        return H, C, C @ self.v + self.c0
+
+    def _grads(self, Z, Cp, yp):
+        n, k = Cp.shape
+        H, C, yh = self._forward(Z)
+        dC = (C - Cp) / (n * k)                     # d/dC of MSE(concepts)/2
+        dy = self.w * (yh - yp) / n                 # d/dyh of w*MSE(score)/2
+        dC = dC + np.outer(dy, self.v)              # score routed through the bottleneck
+        g = {"v": C.T @ dy, "c0": float(dy.sum()),
+             "W2": H.T @ dC, "b2": dC.sum(0)}
+        dH = (dC @ self.W2.T) * (H > 0)
+        g["W1"] = Z.T @ dH
+        g["b1"] = dH.sum(0)
+        for w in self.WEIGHTS:                      # L2, sklearn's scaling
+            g[w] = g[w] + self.alpha * getattr(self, w) / n
+        return g
+
+    def fit(self, X, Cp, yp):
+        X = np.asarray(X, float)
+        self.mu = X.mean(0)
+        self.sd = X.std(0)
+        self.sd[self.sd == 0] = 1.0
+        Z = (X - self.mu) / self.sd
+        Cp = np.asarray(Cp, float)
+        yp = np.asarray(yp, float).ravel()
+        n = len(Z)
+        bs = min(self.BATCH, n)
+
+        m = {k: np.zeros_like(np.atleast_1d(getattr(self, k)), float) for k in self.PARAMS}
+        v = {k: np.zeros_like(np.atleast_1d(getattr(self, k)), float) for k in self.PARAMS}
+        t = 0
+        for _ in range(self.iters):
+            order = self.rng.permutation(n)
+            for s in range(0, n, bs):
+                idx = order[s:s + bs]
+                g = self._grads(Z[idx], Cp[idx], yp[idx])
+                t += 1
+                for k in self.PARAMS:
+                    m[k] = self.B1 * m[k] + (1 - self.B1) * g[k]
+                    v[k] = self.B2 * v[k] + (1 - self.B2) * np.square(g[k])
+                    step = (self.lr * (m[k] / (1 - self.B1 ** t))
+                            / (np.sqrt(v[k] / (1 - self.B2 ** t)) + self.EPS))
+                    cur = getattr(self, k)
+                    # c0 is a plain float; its moment buffers are 1-element
+                    # arrays, so unwrap the step before subtracting
+                    setattr(self, k, cur - (float(np.ravel(step)[0])
+                                            if np.isscalar(cur) else step))
+        return self
+
+    def loss(self, X, Cp, yp):
+        """The objective itself, for selecting on the validation group."""
+        Cp = np.asarray(Cp, float)
+        yp = np.asarray(yp, float).ravel()
+        _, C, yh = self._forward((np.asarray(X, float) - self.mu) / self.sd)
+        return 0.5 * np.mean((C - Cp) ** 2) + 0.5 * self.w * np.mean((yh - yp) ** 2)
+
+    def predict(self, X):
+        _, C, _ = self._forward((np.asarray(X, float) - self.mu) / self.sd)
+        return C
+
+
+def _shared_joint(Xg, Eg, yg, cfg, seed, val, yv):
+    """Joint Stage-1, hyperparameters selected on the validation user group.
+
+    Same protocol as the other two Stage-1s -- fit on the training group,
+    score on held-out users, tie-break toward the more regularized model --
+    scored on this model's own objective, which is the combined one it is
+    trained on. (The ridge and sequential-MLP extractors are scored on
+    emotion MSE for the same reason: it is what they are fitted to.)
+    """
+    from src.modeling.heads import ALPHA_TIE_RTOL, conservative_mlp_hp, mlp_grid
+
+    if val is None or yv is None:
+        raise ValueError("joint Stage-1 needs the validation group's "
+                         "features, emotions and mean scores")
+    Xv, Ev = val
+    grid = mlp_grid(cfg)
+
+    def build(lr, alpha):
+        return _JointNet(Xg.shape[1], int(cfg.mlp_hidden), Eg.shape[1],
+                         lr=lr, alpha=alpha, w_score=cfg.joint_score_weight,
+                         max_iter=cfg.mlp_max_iter, seed=seed)
+
+    losses = np.array([build(lr, a).fit(Xg, Eg, yg).loss(Xv, Ev, yv)
+                       for lr, a in grid])
+    lr, alpha = conservative_mlp_hp(
+        [g for g, l in zip(grid, losses) if l <= losses.min() * (1.0 + ALPHA_TIE_RTOL)])
+    return build(lr, alpha).fit(Xg, Eg, yg)
+
+
 class Mediator(ABC):
     name: str = "mediator"
     label: str = "Mediator"
@@ -113,178 +281,6 @@ class ShuffledMediator(Mediator):
         return self.model.predict(X)
 
 
-class JointMediator(Mediator):
-    """Stage-1 trained *jointly* with a population score head.
-
-    Koh et al.'s joint bottleneck backpropagates one loss through g (x->c) and
-    f (c->y) together. Here f is personal -- one head per user, fit on ~100 of
-    that user's ratings -- so a literally joint fit would either make Stage-1
-    personal too (512x7 weights per user, from 100 samples, and the paper's
-    "7 parameters per user" claim gone) or train Stage-1 on the test users'
-    own scores, which is the leak the v4 split exists to prevent.
-
-    What is trained jointly here is therefore Stage-1 with a *population*
-    score head, on the training group only:
-
-        loss = MSE(g(x), c_pop) + joint_score_weight * MSE(h(g(x)), y_pop)
-
-    The score term shapes the seven concepts to be useful for predicting a
-    score, which is the point of joint training; the personal head is then fit
-    on the frozen output exactly as in every other row, so the comparison and
-    the parameter count are unchanged.
-    """
-    name, label = "emotion_joint", "Hybrid (joint Stage-1)"
-
-    def __init__(self, model):
-        self.model = model
-
-    def transform(self, X):
-        return self.model.predict(X)
-
-
-class _JointBottleneckNet:
-    """512 -> hidden -> 7 concepts -> 1 score, trained with one combined loss.
-
-        loss = MSE(c, c_pop) + w * MSE(v.c + b, y_pop)
-
-    The score head reads the **seven concepts**, not the hidden layer, so the
-    score gradient is forced to flow through the bottleneck -- that is what
-    makes this joint in Koh et al.'s sense. Routing the score head off the
-    hidden layer instead would shape the trunk while leaving the seven
-    concepts under emotion supervision only, which is sequential training
-    wearing a joint label.
-
-    Plain numpy + Adam rather than torch: torch is not a dependency of the
-    analysis environment, and a 512->128->7->1 net on ~4500 rows does not
-    need one. Weights are seeded, so runs reproduce.
-
-    Trained on the training group only and then frozen, exactly like every
-    other Stage-1. It is never fit on a test user's own ratings: making
-    Stage-1 personal is the Delta model that overfits ~100 images, and the
-    "seven parameters per user" claim depends on Stage-1 staying shared.
-    """
-
-    def __init__(self, d_in, d_hidden, n_concept, lr, w_score, max_iter, seed):
-        rng = np.random.default_rng(int(seed))
-        self.W1 = rng.standard_normal((d_in, d_hidden)) * np.sqrt(2.0 / d_in)
-        self.b1 = np.zeros(d_hidden)
-        self.W2 = rng.standard_normal((d_hidden, n_concept)) * np.sqrt(2.0 / d_hidden)
-        self.b2 = np.zeros(n_concept)
-        self.v = rng.standard_normal(n_concept) * np.sqrt(2.0 / n_concept)
-        self.c0 = 0.0
-        self.lr, self.w_score, self.max_iter = float(lr), float(w_score), int(max_iter)
-        self.mu = self.sd = None
-
-    def _params(self):
-        return ["W1", "b1", "W2", "b2", "v", "c0"]
-
-    def _forward(self, X):
-        H = np.maximum(X @ self.W1 + self.b1, 0.0)      # relu
-        C = H @ self.W2 + self.b2                        # the bottleneck
-        y = C @ self.v + self.c0
-        return H, C, y
-
-    def fit(self, X, Cp, yp):
-        X = np.asarray(X, float)
-        self.mu, self.sd = X.mean(0), X.std(0)
-        self.sd[self.sd == 0] = 1.0
-        Z = (X - self.mu) / self.sd
-        Cp, yp = np.asarray(Cp, float), np.asarray(yp, float).ravel()
-        n = len(Z)
-
-        m = {k: np.zeros_like(getattr(self, k), dtype=float) for k in self._params()}
-        v = {k: np.zeros_like(getattr(self, k), dtype=float) for k in self._params()}
-        b1_, b2_, eps = 0.9, 0.999, 1e-8
-
-        for t in range(1, self.max_iter + 1):
-            H, C, yh = self._forward(Z)
-            dC = (2.0 / n) * (C - Cp)                       # emotion term
-            dy = (2.0 * self.w_score / n) * (yh - yp)       # score term
-            dC = dC + np.outer(dy, self.v)                  # through the bottleneck
-
-            g = {"v": C.T @ dy, "c0": dy.sum(),
-                 "W2": H.T @ dC, "b2": dC.sum(0)}
-            dH = (dC @ self.W2.T) * (H > 0)
-            g["W1"] = Z.T @ dH
-            g["b1"] = dH.sum(0)
-
-            for k in self._params():
-                m[k] = b1_ * m[k] + (1 - b1_) * g[k]
-                v[k] = b2_ * v[k] + (1 - b2_) * g[k] ** 2
-                mh = m[k] / (1 - b1_ ** t)
-                vh = v[k] / (1 - b2_ ** t)
-                setattr(self, k, getattr(self, k) - self.lr * mh / (np.sqrt(vh) + eps))
-        return self
-
-    def loss(self, X, Cp, yp):
-        """Combined objective -- the criterion the lr is selected on."""
-        _, C, yh = self._forward((np.asarray(X, float) - self.mu) / self.sd)
-        return (np.mean((C - np.asarray(Cp, float)) ** 2)
-                + self.w_score * np.mean((yh - np.asarray(yp, float).ravel()) ** 2))
-
-    def predict(self, X):
-        _, C, _ = self._forward((np.asarray(X, float) - self.mu) / self.sd)
-        return C                                    # the bottleneck, 7 wide
-
-
-def _joint_stage1(Xg, Eg, yg, cfg, seed, val=None, val_y=None):
-    """Fit the joint Stage-1 and return something with .predict(X).
-
-    The learning rate is chosen on the validation user group, on this
-    network's own combined objective -- the same rule every other shared
-    component follows (val users are disjoint from train and test).
-    """
-    def build(lr):
-        return _JointBottleneckNet(Xg.shape[1], cfg.mlp_hidden, Eg.shape[1],
-                                   lr, cfg.joint_score_weight,
-                                   cfg.stage1_mlp_max_iter, seed)
-
-    grid = np.asarray(cfg.stage1_mlp_lr_grid, float)
-    if val is None or val_y is None:
-        lr = float(grid[len(grid) // 2])
-    else:
-        from src.modeling.heads import ALPHA_TIE_RTOL
-        Xv, Ev = val
-        losses = np.array([build(l).fit(Xg, Eg, yg).loss(Xv, Ev, val_y)
-                           for l in grid])
-        tied = losses <= losses.min() * (1.0 + ALPHA_TIE_RTOL)
-        lr = float(grid[tied][0])          # ascending -> smallest step on a tie
-    return build(lr).fit(Xg, Eg, yg)
-
-
-def _select_mlp_lr(Xg, Yg, cfg, seed, val):
-    """Learning rate for a shared MLP Stage-1, chosen on the validation group.
-
-    Same rule the ridge mediators use: a shared component's hyperparameter is
-    scored on users disjoint from both train and test. Falls back to the
-    middle of the grid when no validation data was passed.
-    """
-    import numpy as np
-    from sklearn.neural_network import MLPRegressor
-    from sklearn.pipeline import make_pipeline
-    from sklearn.preprocessing import StandardScaler
-    from src.modeling.heads import ALPHA_TIE_RTOL
-
-    grid = np.asarray(cfg.stage1_mlp_lr_grid, float)
-    if val is None:
-        return float(grid[len(grid) // 2])
-    Xv, Yv = val
-    Yv = np.asarray(Yv, float)
-    if Yv.shape[1] != np.asarray(Yg).shape[1]:      # joint target is 1 wider
-        Yv = np.column_stack([Yv, np.zeros(len(Yv))])
-    mses = np.empty(len(grid))
-    for i, lr in enumerate(grid):
-        m = make_pipeline(StandardScaler(), MLPRegressor(
-            hidden_layer_sizes=(cfg.mlp_hidden,), activation="relu",
-            alpha=cfg.mlp_alpha, solver="adam", learning_rate_init=float(lr),
-            max_iter=cfg.stage1_mlp_max_iter, early_stopping=False,
-            random_state=int(seed)))
-        m.fit(Xg, Yg)
-        mses[i] = np.mean((m.predict(Xv) - Yv) ** 2)
-    tied = mses <= mses.min() * (1.0 + ALPHA_TIE_RTOL)
-    return float(grid[tied][0])          # ascending -> smallest step wins a tie
-
-
 def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
                            want: list[str] | None = None,
                            seed: int = 0,
@@ -296,10 +292,12 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
     """Build every mediator from train-user data (population-level images).
 
     Stage-1 is ridge by default, independent of which Stage-2 head is tested
-    against it, so the ridge-vs-mlp rows differ only in the head. Two explicit
-    alternatives make Stage-1 its own axis instead of a side effect of the
-    head: "emotion_mlp" (nonlinear, still fit on the emotions alone) and
-    "emotion_joint" (nonlinear, fit on emotions and score together).
+    against it, so the ridge and MLP rows would otherwise differ only in the
+    head. Two mediators make Stage-1 its own axis instead: "emotion_mlp"
+    (one hidden layer, still fitted to the emotions alone) and
+    "emotion_joint" (one hidden layer, fitted to emotions and score together
+    with the score read off the bottleneck). Paired with the MLP Stage-2
+    head these are the MLP -> MLP sequential and MLP -> MLP joint rows.
 
     Xg  features of images train users rated (n_img, d)
     Eg  population-mean emotion ratings for those images (n_img, 7)
@@ -323,6 +321,15 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
     R = rng.standard_normal((Xg.shape[1], K)) / np.sqrt(Xg.shape[1])
     perm = rng.permutation(len(Eg))
 
+    # 35-wide controls for emotion_hist: same construction as the 7-wide
+    # ones, drawn unconditionally right after them so the draw order stays
+    # fixed regardless of `want`, and from the same rng so they are
+    # reproducible the same way. Width 35 to match emotion_hist, not
+    # emotion, since these exist to ask "is emotion_hist's edge about its
+    # 35 numbers, or about what they encode?"
+    R35 = rng.standard_normal((Xg.shape[1], 35)) / np.sqrt(Xg.shape[1])
+    perm35 = rng.permutation(len(Eg))
+
     out: dict[str, Mediator] = {}
     if "identity" in want:
         out["identity"] = IdentityMediator()
@@ -337,24 +344,20 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
         out["shuffled"] = ShuffledMediator(
             _shared_ridge(Xg, Eg[perm], cfg.ridge_alphas, val))
 
-    # --- Stage-1 as its own axis -----------------------------------------
+    # --- Stage-1 as its own axis: the MLP series ------------------------
+    # Same seven concepts, same targets, same validation-group selection
+    # protocol -- only the model family that produces them changes. These
+    # draw from their own RNG, seeded off rng_seed, so adding or removing
+    # them cannot move the random/shuffled numbers above.
     if "emotion_mlp" in want:
-        # same target as "emotion", nonlinear fit: isolates Stage-1 capacity
-        from sklearn.neural_network import MLPRegressor
-        lr = _select_mlp_lr(Xg, Eg, cfg, seed, val)
-        out["emotion_mlp"] = EmotionMediator(make_pipeline(
-            StandardScaler(),
-            MLPRegressor(hidden_layer_sizes=(cfg.mlp_hidden,), activation="relu",
-                         alpha=cfg.mlp_alpha, solver="adam",
-                         learning_rate_init=lr,
-                         max_iter=cfg.stage1_mlp_max_iter,
-                         early_stopping=False, random_state=int(seed))
-        ).fit(Xg, Eg))
+        out["emotion_mlp"] = EmotionMediator(
+            _shared_mlp(Xg, Eg, cfg, rng_seed, val))
     if "emotion_joint" in want:
-        if yg is None:
-            raise ValueError("emotion_joint needs yg (population mean score)")
-        out["emotion_joint"] = JointMediator(
-            _joint_stage1(Xg, Eg, yg, cfg, seed, val, val_y))
+        if yg is None or val_y is None:
+            raise ValueError("emotion_joint needs the training- and "
+                             "validation-group mean scores (yg, val_y)")
+        out["emotion_joint"] = EmotionMediator(
+            _shared_joint(Xg, Eg, yg, cfg, rng_seed, val, val_y))
 
     # --- distribution-valued Stage-1 ------------------------------------
     # Same seven named concepts, but Stage-1 predicts how the raters were
@@ -371,5 +374,17 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
             out[key] = EmotionMediator(
                 _shared_ridge(Xg, Dg[key], cfg.ridge_alphas,
                               (val_dist or {}).get(key)))
+
+    if "pca35" in want:
+        out["pca35"] = PCAMediator(PCA(n_components=35, random_state=0).fit(Xg))
+    if "random35" in want:
+        out["random35"] = RandomMediator(R35)
+    if "shuffled35" in want:
+        if Dg is None or "emotion_hist" not in Dg:
+            raise ValueError("shuffled35 needs Dg['emotion_hist']")
+        out["shuffled35"] = ShuffledMediator(
+            _shared_ridge(Xg, Dg["emotion_hist"].values[perm35] if hasattr(Dg["emotion_hist"], "values")
+                         else Dg["emotion_hist"][perm35],
+                         cfg.ridge_alphas, (val_dist or {}).get("emotion_hist")))
 
     return out
