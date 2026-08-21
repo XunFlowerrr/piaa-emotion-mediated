@@ -51,7 +51,7 @@ if HAS_MODAL:
         image=image,
         cpu=16.0,
         memory=16384,
-        timeout=3600,
+        timeout=7200,
         volumes={"/root/project/features": features_vol},
     )
     def run_step_remote(step_dict: dict) -> dict:
