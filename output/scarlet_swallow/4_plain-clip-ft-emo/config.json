@@ -10,7 +10,7 @@
   "n_train": 100,
   "split_seed": 42,
   "min_test": 20,
-  "backbone": "qwen8b",
+  "backbone": "clip_ft_emo",
   "n_jobs": -1,
   "ridge_alphas": [
     0.01,
