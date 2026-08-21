@@ -387,6 +387,7 @@ class Pipeline:
             fold, dom, feats, seed=seed, want=want)
         n = n_train or cfg.n_train
 
+        print(f"  [Fold {fold.index} | {dom}] -> [1/3] Fitting Population Heads & Anchors...", flush=True)
         # GIAA head. Always fit: it is the population baseline row and
         # also the y_pop that variants A and C are built on.
         # shared component -> hyperparameter from the val group
@@ -417,6 +418,7 @@ class Pipeline:
                     anchors[mname] = self.pop_anchor(
                         meds[mname], Xg, yg, Xv, yv)
 
+        print(f"  [Fold {fold.index} | {dom}] -> [2/3] Tuning Hyperparameters on Validation Group ({len(fold.val_users)} users)...", flush=True)
         # freeze one personal-head hyperparameter per (mediator, head)
         frozen = {}
         for mname in mediators:
@@ -425,8 +427,11 @@ class Pipeline:
                     fold, dom, feats, meds[mname], h, n, variant,
                     anchors.get(mname), pop_ridge)
 
+        print(f"  [Fold {fold.index} | {dom}] -> [3/3] Evaluating Personalized Models for {len(fold.test_users)} Test Users...", flush=True)
         rows = []
-        for unit in self.iter_units(fold, dom, feats, n_train=n_train):
+        for u_idx, unit in enumerate(self.iter_units(fold, dom, feats, n_train=n_train), 1):
+            if u_idx % 10 == 0 or u_idx == len(fold.test_users):
+                print(f"    [Fold {fold.index} | {dom}] Test User {u_idx}/{len(fold.test_users)} evaluated", flush=True)
             base = dict(fold=unit.fold, domain=unit.domain,
                         user_id=unit.user_id)
 
@@ -566,6 +571,8 @@ def _eval_fold_domain_worker(pipe: Pipeline, fold_index: int, dom: str,
                              n_train: int | None, include_population: bool,
                              include_gt_upper_bound: bool, seed: int,
                              variant: str) -> list[dict]:
-    return pipe._eval_fold_domain(
+    res = pipe._eval_fold_domain(
         fold_index, dom, mediators, heads, n_train,
         include_population, include_gt_upper_bound, seed, variant)
+    print(f"  --> [Parallel Worker] Fold {fold_index} ({dom}) completed successfully ({len(res)} rows)", flush=True)
+    return res

@@ -46,12 +46,12 @@ if HAS_MODAL:
         .add_local_file(str(ROOT / "main.py"), remote_path="/root/project/main.py")
     )
 
-    # 4. Remote Serverless Function (16 Cores, 16 GB RAM per worker)
+    # 4. Remote Serverless Function (16 Cores, 16 GB RAM, 24-Hour Timeout)
     @app.function(
         image=image,
         cpu=16.0,
         memory=16384,
-        timeout=7200,
+        timeout=86400,
         volumes={"/root/project/features": features_vol},
     )
     def run_step_remote(step_dict: dict) -> dict:
@@ -67,19 +67,30 @@ if HAS_MODAL:
         out_dir = proj_dir / "output"
         out_dir.mkdir(parents=True, exist_ok=True)
 
-        full_cmd = [sys.executable, "main.py"] + cmd_args
-        print(f"[{codename} | 16-Core Container] Running: {' '.join(full_cmd)}")
+        full_cmd = [sys.executable, "-u", "main.py"] + cmd_args
+        print(f"[{codename} | 16-Core Container] Running: {' '.join(full_cmd)}", flush=True)
+
+        env = os.environ.copy()
+        env["PYTHONUNBUFFERED"] = "1"
 
         start_t = time.time()
-        res = subprocess.run(
+        proc = subprocess.Popen(
             full_cmd,
             cwd=proj_dir,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
+            bufsize=1,
+            env=env,
         )
+        stdout_lines = []
+        if proc.stdout:
+            for line in proc.stdout:
+                print(f"[{codename}] {line}", end="", flush=True)
+                stdout_lines.append(line)
+        proc.wait()
         elapsed = time.time() - start_t
-        print(f"[{codename}] Completed in {elapsed:.1f}s (Exit code: {res.returncode})")
+        print(f"[{codename}] Completed in {elapsed:.1f}s (Exit code: {proc.returncode})", flush=True)
 
         # Collect generated files
         collected_files: dict[str, bytes] = {}
@@ -92,8 +103,8 @@ if HAS_MODAL:
             "id": step_id,
             "codename": codename,
             "folder": folder,
-            "retcode": res.returncode,
-            "stdout": res.stdout,
+            "retcode": proc.returncode,
+            "stdout": "".join(stdout_lines),
             "elapsed": elapsed,
             "files": collected_files,
         }

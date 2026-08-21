@@ -163,7 +163,7 @@ class _JointNet:
         m = {k: np.zeros_like(np.atleast_1d(getattr(self, k)), float) for k in self.PARAMS}
         v = {k: np.zeros_like(np.atleast_1d(getattr(self, k)), float) for k in self.PARAMS}
         t = 0
-        for _ in range(self.iters):
+        for epoch in range(1, self.iters + 1):
             order = self.rng.permutation(n)
             for s in range(0, n, bs):
                 idx = order[s:s + bs]
@@ -179,6 +179,9 @@ class _JointNet:
                     # arrays, so unwrap the step before subtracting
                     setattr(self, k, cur - (float(np.ravel(step)[0])
                                             if np.isscalar(cur) else step))
+            if epoch % 100 == 0 or epoch == self.iters:
+                loss_val = self.loss(X, Cp, yp)
+                print(f"      [JointNet] Epoch {epoch:3d}/{self.iters} | loss: {loss_val:.4f}", flush=True)
         return self
 
     def loss(self, X, Cp, yp):
