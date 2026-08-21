@@ -1,7 +1,7 @@
-"""Modal Serverless CPU Execution Engine for PIAA Experiment Suites.
+"""Modal Serverless 64-Core CPU Execution Engine for PIAA Experiment Suites.
 
-Enables massive multi-core cloud execution on Modal (e.g. 32-core CPU containers)
-with automatic remote synchronization of features and local retrieval of output CSVs.
+Enables massive 64-core cloud execution on Modal with persistent Modal Volume for features
+and automatic local synchronization of output CSV results.
 """
 from __future__ import annotations
 
@@ -24,7 +24,10 @@ if HAS_MODAL:
     # 1. Define Modal App
     app = modal.App(name="piaa-emotion-mediated")
 
-    # 2. Define Container Image with all required scientific dependencies and mounted project files
+    # 2. Persistent Features Volume
+    features_vol = modal.Volume.from_name("piaa-features-vol", create_if_missing=True)
+
+    # 3. Lightweight Container Image (Dependencies + Code)
     image = (
         modal.Image.debian_slim(python_version="3.11")
         .pip_install(
@@ -40,16 +43,16 @@ if HAS_MODAL:
         )
         .add_local_dir(str(ROOT / "src"), remote_path="/root/project/src")
         .add_local_dir(str(ROOT / "Dataset"), remote_path="/root/project/Dataset")
-        .add_local_dir(str(ROOT / "features"), remote_path="/root/project/features")
         .add_local_file(str(ROOT / "main.py"), remote_path="/root/project/main.py")
     )
 
-    # 3. Remote Serverless Function (64 Cores, 64 GB RAM)
+    # 4. Remote Serverless Function (64 Cores, 64 GB RAM)
     @app.function(
         image=image,
         cpu=64.0,
         memory=65536,
         timeout=3600,
+        volumes={"/root/project/features": features_vol},
     )
     def run_step_remote(cmd_args: list[str]) -> tuple[int, str, dict[str, bytes]]:
         """Run an experiment step inside Modal's 64-core container and return generated files."""
@@ -83,6 +86,19 @@ if HAS_MODAL:
         return res.returncode, res.stdout, collected_files
 
 
+def sync_features_to_modal():
+    """Ensure all local features/ files exist on the Modal Volume."""
+    root_features = ROOT / "features"
+    if not root_features.exists():
+        return
+    print("Checking Modal Features Volume synchronization...")
+    with features_vol.batch_upload(force=False) as batch:
+        for p in root_features.rglob("*"):
+            if p.is_file() and not p.name.startswith(".") and p.name != ".DS_Store":
+                rel = str(p.relative_to(root_features))
+                batch.put_file(str(p), rel)
+
+
 def run_suite_steps_modal(suite, steps_to_run):
     """Execute selected suite steps on Modal Serverless 64-core CPU containers."""
     if not HAS_MODAL:
@@ -102,54 +118,55 @@ def run_suite_steps_modal(suite, steps_to_run):
     print(f"OUTPUT DESTINATION: {suite_dir.relative_to(ROOT)}/")
     print("=" * 80)
 
-    with app.run():
-        for idx, step in enumerate(steps_to_run, 1):
-            target_dir = suite_dir / step.folder
-            target_dir.mkdir(parents=True, exist_ok=True)
+    with modal.enable_output():
+        with app.run():
+            for idx, step in enumerate(steps_to_run, 1):
+                target_dir = suite_dir / step.folder
+                target_dir.mkdir(parents=True, exist_ok=True)
 
-            print(f"\n[{idx}/{len(steps_to_run)}] >>> [MODAL / {suite.name}/{step.folder}] {step.title}")
-            # Filter out sys.executable / "main.py" to extract pure CLI arguments
-            clean_args = []
-            skip_next = False
-            for arg in step.cmd:
-                if skip_next:
-                    skip_next = False
-                    continue
-                if arg.endswith("python") or arg.endswith("python3") or arg == "main.py":
-                    continue
-                clean_args.append(arg)
+                print(f"\n[{idx}/{len(steps_to_run)}] >>> [MODAL / {suite.name}/{step.folder}] {step.title}")
+                # Filter out sys.executable / "main.py" to extract pure CLI arguments
+                clean_args = []
+                skip_next = False
+                for arg in step.cmd:
+                    if skip_next:
+                        skip_next = False
+                        continue
+                    if arg.endswith("python") or arg.endswith("python3") or arg == "main.py":
+                        continue
+                    clean_args.append(arg)
 
-            print(f"Dispatched to Modal: python main.py {' '.join(clean_args)}")
-            step_start = time.time()
+                print(f"Dispatched to Modal (64-Core CPU): python main.py {' '.join(clean_args)}")
+                step_start = time.time()
 
-            retcode, stdout_log, files = run_step_remote.remote(clean_args)
-            if retcode != 0:
-                print(stdout_log)
-                play_sound("error")
-                print(f"\n[ERROR] Modal Step '{step.codename}' failed with returncode {retcode}")
-                sys.exit(retcode)
+                retcode, stdout_log, files = run_step_remote.remote(clean_args)
+                if retcode != 0:
+                    print(stdout_log)
+                    play_sound("error")
+                    print(f"\n[ERROR] Modal Step '{step.codename}' failed with returncode {retcode}")
+                    sys.exit(retcode)
 
-            step_elapsed = time.time() - step_start
-            print(f"\n[{step.codename}] Modal run finished in {step_elapsed:.1f}s.")
+                step_elapsed = time.time() - step_start
+                print(f"\n[{step.codename}] Modal run finished in {step_elapsed:.1f}s.")
 
-            # Save retrieved files locally
-            saved_count = 0
-            for rel_path, data in files.items():
-                p = Path(rel_path)
-                # 1. Save in local output/efficiency/ if applicable
-                local_out_file = OUTPUT_DIR / rel_path
-                local_out_file.parent.mkdir(parents=True, exist_ok=True)
-                local_out_file.write_bytes(data)
+                # Save retrieved files locally
+                saved_count = 0
+                for rel_path, data in files.items():
+                    p = Path(rel_path)
+                    # 1. Save in local output/efficiency/ if applicable
+                    local_out_file = OUTPUT_DIR / rel_path
+                    local_out_file.parent.mkdir(parents=True, exist_ok=True)
+                    local_out_file.write_bytes(data)
 
-                # 2. Save in step target directory
-                if p.name != "raw_all.csv":
-                    step_dest = target_dir / p.name
-                    step_dest.write_bytes(data)
-                    saved_count += 1
-                    print(f"  [+] Output Retrieved & Saved: {step_dest.relative_to(ROOT)}")
+                    # 2. Save in step target directory
+                    if p.name != "raw_all.csv":
+                        step_dest = target_dir / p.name
+                        step_dest.write_bytes(data)
+                        saved_count += 1
+                        print(f"  [+] Output Retrieved & Saved: {step_dest.relative_to(ROOT)}")
 
-            print(f"[{suite.name}/{step.folder}] {saved_count} output file(s) synchronized locally.")
-            play_sound("step_done")
+                print(f"[{suite.name}/{step.folder}] {saved_count} output file(s) synchronized locally.")
+                play_sound("step_done")
 
     total_elapsed = time.time() - total_start
     play_sound("suite_done")
