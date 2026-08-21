@@ -505,6 +505,7 @@ class Pipeline:
         domains = domains or DOMAINS
         variant = stage2_variant or cfg.stage2_variant
         rows = []
+        n_jobs = getattr(cfg, "n_jobs", 1)
         want_folds = None if folds is None else {int(f) for f in folds}
         tasks = [(fold.index, dom) for fold in self.split.folds()
                  if (want_folds is None or fold.index in want_folds)
