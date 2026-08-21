@@ -40,11 +40,11 @@ if HAS_MODAL:
         )
     )
 
-    # 3. Remote Serverless Function (32 Cores, 32 GB RAM)
+    # 3. Remote Serverless Function (64 Cores, 64 GB RAM)
     @app.function(
         image=image,
-        cpu=32.0,
-        memory=32768,
+        cpu=64.0,
+        memory=65536,
         timeout=3600,
         mounts=[
             modal.Mount.from_local_dir(ROOT / "src", remote_path="/root/project/src"),
@@ -54,7 +54,7 @@ if HAS_MODAL:
         ],
     )
     def run_step_remote(cmd_args: list[str]) -> tuple[int, str, dict[str, bytes]]:
-        """Run an experiment step inside Modal's 32-core container and return generated files."""
+        """Run an experiment step inside Modal's 64-core container and return generated files."""
         import subprocess
 
         proj_dir = Path("/root/project")
@@ -62,7 +62,7 @@ if HAS_MODAL:
         out_dir.mkdir(parents=True, exist_ok=True)
 
         full_cmd = [sys.executable, "main.py"] + cmd_args
-        print(f"[Modal Worker (32-Core CPU)] Running: {' '.join(full_cmd)}")
+        print(f"[Modal Worker (64-Core CPU)] Running: {' '.join(full_cmd)}")
 
         start_t = time.time()
         res = subprocess.run(
@@ -86,7 +86,7 @@ if HAS_MODAL:
 
 
 def run_suite_steps_modal(suite, steps_to_run):
-    """Execute selected suite steps on Modal Serverless 32-core CPU containers."""
+    """Execute selected suite steps on Modal Serverless 64-core CPU containers."""
     if not HAS_MODAL:
         print("[ERROR] 'modal' package is not installed. Please run: uv add modal")
         sys.exit(1)
@@ -99,7 +99,7 @@ def run_suite_steps_modal(suite, steps_to_run):
 
     names = [s.codename for s in steps_to_run]
     print("=" * 80)
-    print(f"🚀 EXECUTING SUITE ON MODAL SERVERLESS (32-CORE CPU): '{suite.name}' ({suite.title})")
+    print(f"🚀 EXECUTING SUITE ON MODAL SERVERLESS (64-CORE CPU): '{suite.name}' ({suite.title})")
     print(f"SELECTED STEPS ({len(steps_to_run)}): {', '.join(names)}")
     print(f"OUTPUT DESTINATION: {suite_dir.relative_to(ROOT)}/")
     print("=" * 80)
