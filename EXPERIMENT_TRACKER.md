@@ -29,6 +29,7 @@ This document provides a chronological record of all experiment suites, their su
 | **8** | `silver_falcon` | `COMPLETED (5/5)` | `output/silver_falcon/` (`output/silver_falcon/silver_falcon_all_runs.zip`) | Standard Stage-2 Controls Sweep (identity, pca, emotion, random, shuffled) across 5 Backbones (Anchor C) |
 | **9** | `scarlet_swallow` | `COMPLETED (10/10)` | `output/scarlet_swallow/` (`output/scarlet_swallow/scarlet_swallow_all_runs.zip`) | Plain Sweeps (No-Anchor), Plain Distributions & Qwen8B Diagnostics Suite (10 Steps) |
 | **10** | `demonic_bobcat` | `COMPLETED (3/3)` | `output/demonic_bobcat/` (`output/demonic_bobcat/demonic_bobcat_all_runs.zip`) | Qwen3-VL 8B MLP Series Rebuild Suite (Anchor C, n=100, MLP Head, 3 Seeds) |
+| **11** | `logical_capybara` | `PENDING (0/3)` | `output/logical_capybara/` (`output/logical_capybara/logical_capybara_all_runs.zip`) | Table 1 Control Baselines Suite (identity, random, pca under MLP Head, Stage-2 C, 3 Seeds) |
 
 ---
 
