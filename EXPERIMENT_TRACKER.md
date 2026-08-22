@@ -33,23 +33,31 @@ This document provides a chronological record of all experiment suites, their su
 
 ---
 
+## 🗄️ Where these suites now live
+
+All 11 suites above have been retired to [`archive/suites/`](archive/suites/) —
+each one's `SUITE` definition plus its generated `run_<codename>.py`, kept
+together. Their results moved to `archive-output/<codename>/`. `suites/` is
+empty, so `uv run suite.py list` reports only live suites (currently none).
+
+See [`archive/suites/README.md`](archive/suites/README.md) to bring one back;
+the commands below apply to a suite that is live in `suites/`.
+
 ## 🛠️ Suite Management Infrastructure (`suite.py`)
 
-All suites are managed modularly in `suites/` using a reusable engine (`src/utils/suite_engine.py`). Each suite has its own standalone generated runner:
+Suites are managed modularly in `suites/` using a reusable engine (`src/utils/suite_engine.py`). Each suite has its own standalone generated runner:
 
 ```bash
 # 1. List all registered suites and overall completion progress
 uv run suite.py list
 
 # 2. View details & status table for any suite
-uv run suite.py show rebuttal
-uv run suite.py show hayashi
-uv run suite.py show first
+uv run suite.py show <codename>
 
 # 3. Run experiments via Master CLI or Dedicated Runner
-uv run run_rebuttal.py --list
-uv run run_rebuttal.py --run table1-mlp-c
-uv run run_rebuttal.py --zip
+uv run run_<codename>.py --list
+uv run run_<codename>.py --run <step>
+uv run run_<codename>.py --zip
 
 # 4. Generate a brand new suite with auto-generated codename (powered by coolname)
 uv run suite.py new                      # generates random coolname (e.g. swift-falcon)
@@ -97,11 +105,11 @@ uv run suite.py new --name ablations     # generates custom suite and run_ablati
 
 ---
 
-## 3. Suite: `rebuttal` — *Active Suite*
+## 3. Suite: `rebuttal` — *Archived*
 
 * **Codename**: `rebuttal`
-* **Runner**: [`run_rebuttal.py`](file:///Users/xunflowerrr/Main/Work/GithubRepository/piaa-emotion-mediated/run_rebuttal.py)
-* **Output Destination**: `output/rebuttal/<codename>/`
+* **Runner**: [`archive/suites/run_rebuttal.py`](archive/suites/run_rebuttal.py)
+* **Output Destination**: `archive-output/rebuttal/<codename>/`
 * **Archive**: `rebuttal_all_runs.zip`
 * **Purpose**: Full systematic comparison between Anchor C and Plain unanchored baselines for reviewer evaluation.
 
