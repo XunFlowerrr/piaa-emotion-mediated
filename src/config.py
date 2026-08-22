@@ -99,15 +99,18 @@ class Config:
     # is not the controlled comparison this table is for.
     mlp_max_iter: int = 500
 
-    # Step size and weight decay, selected *together* on the validation user
-    # group, by the same procedure and the same criterion as the ridge
-    # penalty. Selecting the step size but not the penalty would give ridge a
-    # 17-point regularization search and the MLP none, on a network with far
-    # more parameters than samples -- the table would then be reporting that
-    # handicap rather than the model family. Small grids because a Stage-1
-    # fit on 4096-d features costs ~25 s; the values are stated in the paper.
-    mlp_lr_grid: tuple = (1e-3, 3e-3, 1e-2)
-    mlp_alpha_grid: tuple = (1e-3, 1e-1, 1e1)
+    # Weight decay, fixed at zero and not tuned. The MLP series is specified
+    # by its architecture and its step size; adding a second searched axis
+    # would make "the MLP row" a different comparison from the one that was
+    # asked for.
+    mlp_alpha: float = 0.0
+
+    # Learning rate is selected on the validation group, by the same
+    # procedure every other hyperparameter uses: mirror the test protocol
+    # inside the validation users, average SROCC over their units, freeze the
+    # winner. Five values, ascending, so the tie-break toward the smallest
+    # step has a well-defined direction.
+    mlp_lr_grid: tuple = (1e-4, 3e-4, 1e-3, 3e-3, 1e-2)
 
     # Joint Stage-1: loss = MSE(concepts) + w * MSE(score). Fixed at 1 in
     # advance, not tuned. The two targets sit on comparable scales (emotion

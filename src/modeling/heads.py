@@ -228,21 +228,13 @@ class SparseLinearHead(Head):
         return self._pipe[-1].coef_.ravel().copy()
 
 
-def mlp_grid(cfg):
-    """Every (learning rate, weight decay) pair the MLP is selected over.
-
-    One grid, used for both stages, so "the MLP's hyperparameters" means the
-    same thing in the extractor and in the predictor. Ordered lr-major and
-    ascending in both, which is what the tie-break in
-    Pipeline.select_personal_hyperparam assumes.
-    """
-    return tuple((float(lr), float(a))
-                 for lr in cfg.mlp_lr_grid for a in cfg.mlp_alpha_grid)
-
-
-def make_mlp(cfg, lr, alpha, seed: int, scale: bool = True):
+def make_mlp(cfg, lr, seed: int, scale: bool = True):
     """The one place an MLP is constructed, so the extractor and the predictor
-    cannot drift apart.
+    cannot drift apart. One hidden layer of cfg.mlp_hidden units in both.
+
+    The learning rate is the only thing selected; weight decay is fixed at
+    cfg.mlp_alpha and the epoch budget at cfg.mlp_max_iter, both stated in
+    advance rather than tuned.
 
     early_stopping=False removes the internal 85/15 split, which on a support
     set of 10 ratings would leave one or two validation samples and no usable
@@ -254,7 +246,8 @@ def make_mlp(cfg, lr, alpha, seed: int, scale: bool = True):
 
     net = MLPRegressor(
         hidden_layer_sizes=(int(cfg.mlp_hidden),), activation="relu",
-        solver="adam", alpha=float(alpha), learning_rate_init=float(lr),
+        solver="adam", alpha=float(cfg.mlp_alpha),
+        learning_rate_init=float(lr),
         max_iter=int(cfg.mlp_max_iter), early_stopping=False,
         tol=0.0, n_iter_no_change=int(cfg.mlp_max_iter),
         random_state=int(seed))
@@ -264,13 +257,13 @@ def make_mlp(cfg, lr, alpha, seed: int, scale: bool = True):
 class MLPHead(Head):
     """Personal predictor: mediator output -> one score, one hidden layer.
 
-    Its hyperparameter is the (learning rate, weight decay) pair, and it is
-    *not* chosen here. Pipeline.select_personal_hyperparam freezes one pair
-    per (fold, domain, mediator, n_train) on the validation user group and
-    passes it in as `frozen_hp`, exactly the way the ridge penalty arrives as
-    `frozen_alpha`. Choosing it from the user's own support set is the
-    behaviour the reviewer asked us to remove, so fit() refuses to run
-    without a frozen pair rather than quietly falling back to it.
+    Its hyperparameter is the learning rate, and it is *not* chosen here.
+    Pipeline.select_personal_hyperparam freezes one rate per (fold, domain,
+    mediator, n_train) on the validation user group and passes it in as
+    `frozen_lr`, exactly the way the ridge penalty arrives as `frozen_alpha`.
+    Choosing it from the user's own support set is the behaviour the reviewer
+    asked us to remove, so fit() refuses to run without a frozen rate rather
+    than quietly falling back to it.
 
     `scale=False` is for the anchored case, where the training-group scaler
     has already been applied by _ResidualHead and standardizing a second time
@@ -284,19 +277,18 @@ class MLPHead(Head):
     def __init__(self, cfg, seed: int = 0, scale: bool = True):
         self.cfg, self.seed, self.scale = cfg, int(seed), bool(scale)
         self.model = None
-        self._hp = (np.nan, np.nan)
+        self._lr = np.nan
 
-    def fit(self, M, y, val=None, frozen_hp=None, **_):
-        if frozen_hp is None:
+    def fit(self, M, y, val=None, frozen_lr=None, **_):
+        if frozen_lr is None:
             if val is None:
                 raise ValueError(
-                    "MLPHead needs a (learning rate, weight decay) pair frozen "
-                    "on the validation group; it must not choose one from the "
-                    "user's own support set")
-            frozen_hp = self._select_on_val(M, y, val)
-        lr, alpha = frozen_hp
-        self._hp = (float(lr), float(alpha))
-        self.model = make_mlp(self.cfg, lr, alpha, self.seed, self.scale)
+                    "MLPHead needs a learning rate frozen on the validation "
+                    "group; it must not choose one from the user's own "
+                    "support set")
+            frozen_lr = self._select_on_val(M, y, val)
+        self._lr = float(frozen_lr)
+        self.model = make_mlp(self.cfg, self._lr, self.seed, self.scale)
         self.model.fit(M, np.asarray(y, float).ravel())
         return self
 
@@ -314,16 +306,17 @@ class MLPHead(Head):
         and scored on the validation group, the same rule select_alpha_on_val
         applies to the ridge GIAA head."""
         Mv, yv = val
-        grid = mlp_grid(self.cfg)
+        grid = np.asarray(self.cfg.mlp_lr_grid, float)
         mses = np.array([
-            np.mean((make_mlp(self.cfg, lr, a, self.seed, self.scale)
+            np.mean((make_mlp(self.cfg, lr, self.seed, self.scale)
                      .fit(M, np.asarray(y, float).ravel()).predict(Mv)
                      - np.asarray(yv, float).ravel()) ** 2)
-            for lr, a in grid])
-        chosen = conservative_mlp_hp(
-            [g for g, m in zip(grid, mses) if m <= mses.min() * (1.0 + ALPHA_TIE_RTOL)])
+            for lr in grid])
+        chosen = conservative_lr(grid, mses)
         selection_log.note("population_head", "giaa_mlp", "val_mse",
-                           grid, mses, chosen, lower_is_better=True,
+                           [(lr, self.cfg.mlp_alpha) for lr in grid],
+                           mses, (chosen, self.cfg.mlp_alpha),
+                           lower_is_better=True,
                            head="mlp", n_val_scored=len(np.asarray(yv)),
                            n_val_kind="images")
         return chosen
@@ -332,8 +325,8 @@ class MLPHead(Head):
         return np.asarray(self.model.predict(M), float).ravel()
 
     @property
-    def hp_(self) -> tuple:
-        return self._hp
+    def lr_(self) -> float:
+        return float(self._lr)
 
 
 def mlp_iterations(model) -> float:
@@ -342,17 +335,27 @@ def mlp_iterations(model) -> float:
     return float(getattr(net, "n_iter_", np.nan))
 
 
-def conservative_mlp_hp(tied):
-    """Break a tie among (lr, weight decay) pairs the same way
-    select_alpha_on_val breaks one among ridge penalties: toward the more
-    regularized model. Here that is the smallest step and the strongest decay.
+def conservative_lr(grid, scores, lower_is_better: bool = True) -> float:
+    """Pick the learning rate, breaking a tie toward the *smallest* step.
+
+    select_alpha_on_val breaks a ridge tie toward the strongest penalty --
+    the more conservative model. For a step size the conservative direction
+    is the other way round: among rates that are indistinguishable on the
+    validation group, the smallest one moves the weights least.
     """
-    return min(tied, key=lambda c: (c[0], -c[1]))
+    grid = np.asarray(grid, float)
+    scores = np.asarray(scores, float)
+    if lower_is_better:
+        tied = scores <= scores.min() * (1.0 + ALPHA_TIE_RTOL)
+    else:
+        best = scores.max()
+        tied = scores >= best - abs(best) * ALPHA_TIE_RTOL
+    return float(grid[tied][0])          # grid is ascending -> smallest step
 
 
 #: heads whose hyperparameter is a penalty passed as `frozen_alpha`
-#: (everything except the MLP, whose candidate is an (lr, decay) pair and
-#: arrives as `frozen_hp`)
+#: (everything except the MLP, whose candidate is a learning rate and
+#: arrives as `frozen_lr`)
 ALPHA_HEADS = ("ridge", "lasso", "elastic")
 
 
@@ -363,7 +366,7 @@ def head_grid(kind: str, cfg):
     if kind in ("lasso", "elastic"):
         return cfg.sparse_alphas
     if kind == "mlp":
-        return mlp_grid(cfg)
+        return cfg.mlp_lr_grid
     raise KeyError(f"unknown head '{kind}' (have: ridge, lasso, elastic, mlp)")
 
 

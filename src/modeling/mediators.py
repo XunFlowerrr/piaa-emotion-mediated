@@ -65,34 +65,32 @@ def _shared_ridge(Xg, Yg, alphas, val=None, label=None):
 
 
 def _shared_mlp(Xg, Yg, cfg, seed, val, label=None):
-    """Stage-1 as a one-hidden-layer MLP, hyperparameters from the val group.
+    """Stage-1 as a one-hidden-layer MLP, learning rate from the val group.
 
     Deliberately the same shape as _shared_ridge: fit on the training group,
-    score MSE on the held-out validation users, break ties toward the more
-    regularized model, refit the winner. The learning rate and weight decay
-    are selected together, because a network with more parameters than
-    samples is decided by its penalty, and tuning ridge's penalty over 17
-    values while leaving the MLP's fixed would put a handicap in the table
-    and call it a model family.
+    score MSE on the held-out validation users, break the tie toward the
+    smallest step, refit the winner. Weight decay and the epoch budget are
+    fixed in advance (cfg.mlp_alpha, cfg.mlp_max_iter), so the rate is the
+    only thing any data chooses.
     """
-    from src.modeling.heads import (ALPHA_TIE_RTOL, conservative_mlp_hp,
-                                    make_mlp, mlp_grid, mlp_iterations)
+    from src.modeling.heads import conservative_lr, make_mlp, mlp_iterations
 
     if val is None:
         raise ValueError("a Stage-1 MLP needs the validation group")
     Xv, Yv = val
-    grid = mlp_grid(cfg)
-    mses = np.array([np.mean((make_mlp(cfg, lr, a, seed).fit(Xg, Yg).predict(Xv) - Yv) ** 2)
-                     for lr, a in grid])
-    lr, alpha = conservative_mlp_hp(
-        [g for g, m in zip(grid, mses) if m <= mses.min() * (1.0 + ALPHA_TIE_RTOL)])
-    selection_log.note("stage1", "stage1_mlp", "val_mse", grid, mses, (lr, alpha),
-                       lower_is_better=True, mediator=label,
+    grid = np.asarray(cfg.mlp_lr_grid, float)
+    mses = np.array([np.mean((make_mlp(cfg, lr, seed).fit(Xg, Yg).predict(Xv) - Yv) ** 2)
+                     for lr in grid])
+    lr = conservative_lr(grid, mses)
+    selection_log.note("stage1", "stage1_mlp", "val_mse",
+                       [(g, cfg.mlp_alpha) for g in grid], mses,
+                       (lr, cfg.mlp_alpha), lower_is_better=True,
+                       mediator=label,
                        n_val_scored=len(np.asarray(Yv)), n_val_kind="images")
-    fitted = make_mlp(cfg, lr, alpha, seed).fit(Xg, Yg)
+    fitted = make_mlp(cfg, lr, seed).fit(Xg, Yg)
     selection_log.note_fit("stage1", "stage1_mlp", "n_iter",
                            mlp_iterations(fitted), mediator=label,
-                           lr=lr, alpha=alpha,
+                           lr=lr, alpha=cfg.mlp_alpha,
                            extra_note=f"max_iter={cfg.mlp_max_iter}")
     return fitted
 
@@ -219,34 +217,35 @@ def _shared_joint(Xg, Eg, yg, cfg, seed, val, yv, label=None):
     """Joint Stage-1, hyperparameters selected on the validation user group.
 
     Same protocol as the other two Stage-1s -- fit on the training group,
-    score on held-out users, tie-break toward the more regularized model --
-    scored on this model's own objective, which is the combined one it is
-    trained on. (The ridge and sequential-MLP extractors are scored on
-    emotion MSE for the same reason: it is what they are fitted to.)
+    score on held-out users, tie-break toward the smallest step -- scored on
+    this model's own objective, which is the combined one it is trained on.
+    (The ridge and sequential-MLP extractors are scored on emotion MSE for
+    the same reason: it is what they are fitted to.)
     """
-    from src.modeling.heads import ALPHA_TIE_RTOL, conservative_mlp_hp, mlp_grid
+    from src.modeling.heads import conservative_lr
 
     if val is None or yv is None:
         raise ValueError("joint Stage-1 needs the validation group's "
                          "features, emotions and mean scores")
     Xv, Ev = val
-    grid = mlp_grid(cfg)
+    grid = np.asarray(cfg.mlp_lr_grid, float)
 
-    def build(lr, alpha):
+    def build(lr):
         return _JointNet(Xg.shape[1], int(cfg.mlp_hidden), Eg.shape[1],
-                         lr=lr, alpha=alpha, w_score=cfg.joint_score_weight,
+                         lr=lr, alpha=cfg.mlp_alpha,
+                         w_score=cfg.joint_score_weight,
                          max_iter=cfg.mlp_max_iter, seed=seed)
 
-    losses = np.array([build(lr, a).fit(Xg, Eg, yg).loss(Xv, Ev, yv)
-                       for lr, a in grid])
-    lr, alpha = conservative_mlp_hp(
-        [g for g, l in zip(grid, losses) if l <= losses.min() * (1.0 + ALPHA_TIE_RTOL)])
+    losses = np.array([build(lr).fit(Xg, Eg, yg).loss(Xv, Ev, yv)
+                       for lr in grid])
+    lr = conservative_lr(grid, losses)
     selection_log.note("stage1", "stage1_joint", "val_joint_loss",
-                       grid, losses, (lr, alpha), lower_is_better=True,
+                       [(g, cfg.mlp_alpha) for g in grid], losses,
+                       (lr, cfg.mlp_alpha), lower_is_better=True,
                        mediator=label, n_val_scored=len(np.asarray(yv)),
                        n_val_kind="images",
                        extra_note=f"score_weight={cfg.joint_score_weight}")
-    return build(lr, alpha).fit(Xg, Eg, yg)
+    return build(lr).fit(Xg, Eg, yg)
 
 
 class Mediator(ABC):

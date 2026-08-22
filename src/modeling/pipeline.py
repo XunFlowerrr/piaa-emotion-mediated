@@ -16,8 +16,8 @@ import pandas as pd
 
 from src.data.data import CORE7, DOMAINS, XpassDataset
 from src.data.splits import V4Split, per_user_split, user_rng
-from src.modeling.heads import (ALPHA_HEADS, ALPHA_TIE_RTOL,
-                                conservative_mlp_hp, head_grid, make_head)
+from src.modeling.heads import (ALPHA_HEADS, ALPHA_TIE_RTOL, head_grid,
+                                make_head)
 from src.modeling.mediators import build_shared_mediators
 from src.utils import selection_log
 from src.utils.metrics import evaluate, srocc
@@ -84,11 +84,11 @@ class _ResidualHead:
         M = np.asarray(M, float)
         return M if self.scaler is None else self.scaler.transform(M)
 
-    def fit(self, M, y, X_raw=None, frozen_alpha=None, frozen_hp=None, **_):
+    def fit(self, M, y, X_raw=None, frozen_alpha=None, frozen_lr=None, **_):
         r = np.asarray(y, float).ravel() - self._pop(X_raw)
         Z = self._z(M)
-        if frozen_hp is not None:
-            self.head.fit(Z, r, frozen_hp=frozen_hp)
+        if frozen_lr is not None:
+            self.head.fit(Z, r, frozen_lr=frozen_lr)
         elif frozen_alpha is not None:
             self.head.fit(Z, r, frozen_alpha=frozen_alpha)
         else:
@@ -292,7 +292,7 @@ class Pipeline:
         """(X, E, y) of the held-out validation user group for this fold/domain."""
         return self.group_data(fold.val_users, domain, feats)
 
-    def pop_anchor(self, med, Xg, yg, Xv, yv):
+    def pop_anchor(self, med, Xg, yg, Xv, yv, mediator_name=None):
         """(scaler, w_pop, b_pop) for variant B: the Stage-2 coefficients of
         the pooled training group, in the training group's own units."""
         from sklearn.linear_model import Ridge
@@ -305,7 +305,7 @@ class Pipeline:
         alphas = np.asarray(self.cfg.ridge_alphas, float)
         a = select_alpha_on_val(Zg, yg, (Zv, yv), alphas, stage="anchor",
                                 component="pop_anchor",
-                                mediator=getattr(med, "name", None))
+                                mediator=mediator_name)
         r = Ridge(alpha=a).fit(Zg, yg)
         return scaler, r.coef_.ravel(), float(r.intercept_)
 
@@ -333,7 +333,8 @@ class Pipeline:
 
     def select_personal_hyperparam(self, fold, domain: str, feats, med, kind: str,
                                    n_train: int, variant: str = "plain",
-                                   anchor=None, pop_head=None):
+                                   anchor=None, pop_head=None,
+                                   mediator_name=None):
         """Freeze one personal-head hyperparameter for (fold, domain, n_train)
         by mirroring the test protocol inside the validation user group.
 
@@ -356,7 +357,7 @@ class Pipeline:
         """
         cfg = self.cfg
         is_alpha = kind in ALPHA_HEADS
-        cands = [float(c) if is_alpha else tuple(c) for c in head_grid(kind, cfg)]
+        cands = [float(c) for c in head_grid(kind, cfg)]
         scores = {c: [] for c in cands}
 
         for unit in self.iter_units(fold, domain, feats, n_train=n_train,
@@ -364,7 +365,7 @@ class Pipeline:
             M_tr = med.transform(unit.X_train)
             M_ev = med.transform(unit.X_eval)
             for c in cands:
-                kw = {"frozen_alpha": c} if is_alpha else {"frozen_hp": c}
+                kw = {"frozen_alpha": c} if is_alpha else {"frozen_lr": c}
                 h = self.make_personal(kind, unit.user_id, variant, anchor, pop_head)
                 if isinstance(h, (_ResidualHead, _PopAnchoredRidge)):
                     h.fit(M_tr, unit.y_train, X_raw=unit.X_train, **kw)
@@ -376,16 +377,19 @@ class Pipeline:
         means = {c: (np.mean(v) if v else -np.inf) for c, v in scores.items()}
         best = max(means.values())
         tied = [c for c, s in means.items() if s >= best - abs(best) * ALPHA_TIE_RTOL]
-        if is_alpha:
-            # same tie-break direction as select_alpha_on_val: strongest penalty
-            chosen = max(tied)
-        else:
-            chosen = conservative_mlp_hp(tied)
+        # same tie-break direction as select_alpha_on_val for a penalty --
+        # the strongest, i.e. the more regularized model. A learning rate is
+        # conservative in the other direction, so the smallest step wins.
+        chosen = max(tied) if is_alpha else min(tied)
         n_units = len(next(iter(scores.values()))) if scores else 0
+        log_cands = (cands if is_alpha
+                     else [(c, cfg.mlp_alpha) for c in cands])
+        log_chosen = chosen if is_alpha else (chosen, cfg.mlp_alpha)
         selection_log.note(
             "stage2_personal", f"personal_{kind}", "val_srocc_mean",
-            cands, [means[c] for c in cands], chosen, lower_is_better=False,
-            mediator=getattr(med, "name", None), head=kind,
+            log_cands, [means[c] for c in cands], log_chosen,
+            lower_is_better=False,
+            mediator=mediator_name, head=kind,
             n_val_scored=n_units, n_val_kind="user_units",
             n_val_users=len(fold.val_users),
             extra_note=f"variant={variant} n_train={n_train}")
@@ -461,7 +465,7 @@ class Pipeline:
             for mname in mediators:
                 if mname in touched:
                     anchors[mname] = self.pop_anchor(
-                        meds[mname], Xg, yg, Xv, yv)
+                        meds[mname], Xg, yg, Xv, yv, mediator_name=mname)
 
         print(f"  [Fold {fold.index} | {dom}] -> [2/3] Tuning Hyperparameters on Validation Group ({len(fold.val_users)} users)...", flush=True)
         # freeze one personal-head hyperparameter per (mediator, head)
@@ -470,7 +474,7 @@ class Pipeline:
             for h in heads:
                 frozen[(mname, h)] = self.select_personal_hyperparam(
                     fold, dom, feats, meds[mname], h, n, variant,
-                    anchors.get(mname), pop_ridge)
+                    anchors.get(mname), pop_ridge, mediator_name=mname)
 
         print(f"  [Fold {fold.index} | {dom}] -> [3/3] Evaluating Personalized Models for {len(fold.test_users)} Test Users...", flush=True)
         rows = []
@@ -502,7 +506,7 @@ class Pipeline:
                     head = self.make_personal(h, hseed, variant,
                                               anchors.get(mname), pop_ridge)
                     kw = ({"frozen_alpha": fval} if h in ALPHA_HEADS
-                          else {"frozen_hp": fval})
+                          else {"frozen_lr": fval})
                     if isinstance(head, (_ResidualHead, _PopAnchoredRidge)):
                         head.fit(M_tr, unit.y_train,
                                  X_raw=unit.X_train, **kw)
@@ -530,7 +534,8 @@ class Pipeline:
                              **evaluate(unit.y_eval, p)})
 
         for (mname, h), d in diag.items():
-            lr, alpha = (frozen[(mname, h)] if h not in ALPHA_HEADS
+            lr, alpha = ((frozen[(mname, h)], cfg.mlp_alpha)
+                         if h not in ALPHA_HEADS
                          else (None, frozen[(mname, h)]))
             for name, vals, note_ in (
                     ("n_units", [len(d["n_iter"])], None),

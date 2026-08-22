@@ -46,29 +46,69 @@ This closes three leakage points at once:
 
 ### Where each hyperparameter comes from
 
-One rule, applied everywhere:
+**Nothing is selected on data the model being scored has seen, and nothing
+is selected on a test user.** The validation user group - disjoint from both
+the train and the test group - carries every choice. How it is used depends
+on whether the component is shared across users or personal to one:
 
-| component | shared or personal? | hyperparameter selected on |
-|---|---|---|
-| Stage-1 emotion mediator (ridge) | shared | validation user group |
-| Shuffled mediator (ridge) | shared | validation user group |
-| Stage-1 emotion mediator (MLP) | shared | validation user group |
-| Population / GIAA head (ridge, MLP) | shared | validation user group |
-| Pop-zero formula in `efficiency` | shared | validation user group |
-| Per-user head (ridge) | personal | that user's own support set (`RidgeCV`) |
-| Per-user head (MLP) | personal | 80/20 split of that user's own support set |
+| component | shared or personal? | selected on | criterion |
+|---|---|---|---|
+| Stage-1 mediators, ridge (`emotion`, `shuffled`, `emotion_sd`, `emotion_hist`, `shuffled35`) | shared | validation user group | MSE over validation images |
+| Stage-1 mediator, sequential MLP (`emotion_mlp`) | shared | validation user group | MSE over validation images |
+| Stage-1 mediator, joint MLP (`emotion_joint`) | shared | validation user group | its own joint loss |
+| Population / GIAA head (ridge, MLP) | shared | validation user group | MSE over validation images |
+| Variant B/C population anchor | shared | validation user group | MSE over validation images |
+| **Per-user head (ridge, lasso, elastic, MLP)** | personal | **validation user group, by mirroring the test protocol** | mean SROCC over validation user-units |
 
-The two personal rows cannot use the validation group: those users are
-*different people*, and the whole point of a personal head is that it is
-fit to one individual's taste. What matters for them is that the user's
-50 evaluation images are held out before anything is fit and are never
-touched during selection - which `verify --splits` and the fixed
-support/eval split below both enforce.
+#### The personal head: mirroring the test protocol
 
-PCA (`n_components=7`) and the random projection have no hyperparameter to
-select, so nothing is chosen for them from any data.
+A personal head is fit to one person from a few dozen ratings. Choosing its
+hyperparameter on the pooled training group - which is what `RidgeCV`'s
+internal generalized cross-validation would do - tunes it for a regime the
+head never faces. So the test protocol is reproduced inside the validation
+group instead (`Pipeline.select_personal_hyperparam`):
 
-`uv run main.py verify --splits` checks points 1 and 3 automatically.
+1. For every validation user and domain, run **the identical support/eval
+   split used for test users**: shuffle that user's images with
+   `RandomState(42 + user_id)`, hold out the first 50 as a fixed inner
+   evaluation set, draw the support set from the remainder. This is literally
+   the same function (`Pipeline.iter_units`) with `users=fold.val_users`; no
+   split logic differs between the two groups.
+2. For each candidate value, fit a personal head on each validation user's
+   support set, score it with SROCC on that user's own inner evaluation set,
+   and average across all validation user-domain units.
+3. Freeze the best value and apply that single fixed value to every test
+   user's personal head. No test-group data is touched during selection, and
+   no test user's head is chosen by their own held-out performance.
+
+Selection runs **separately per (fold, domain, support size, mediator,
+head)**. Per support size because the optimal penalty depends strongly on it
+- 10 ratings need far heavier regularization than 100. Per domain is a
+choice, not a necessity; we state it here because either is defensible.
+
+The same procedure carries **every** condition - Direct, Random, Shuffled,
+PCA, Hybrid - so a difference between rows is a difference between mediators
+and not between how carefully each was tuned.
+
+Two components are deliberately outside it, and both are stated rather than
+hidden:
+
+- The **GIAA / population head** has no support set and no per-user fit, so
+  the mirrored per-user protocol cannot be applied to it. Its hyperparameter
+  is still chosen on the validation group, scored by MSE over that group's
+  images.
+- The **`gt_emotion` upper bound** keeps its own per-user selection
+  (`RidgeCV` inside the user's support set). It is an oracle ceiling that
+  uses true emotion ratings, reported for reference and excluded from every
+  fairness comparison in the paper.
+
+PCA (`n_components=7`), the random projection and Direct have no Stage-1
+hyperparameter, so nothing is chosen for them from any data. Their Stage-2
+personal heads still go through the protocol above.
+
+`uv run main.py verify --splits` checks the split itself; the
+`selection*.csv` described next records what every one of these choices
+came out as.
 
 ### What each run selected: `selection*.csv`
 
@@ -133,14 +173,25 @@ the paired test, since it's testing per-unit differences, not the intervals.
 
 ### Ridge
 
-Alpha comes from the same grid everywhere: **11 values from 1e-2 to 1e3**
-(`numpy.logspace(-2, 3, 11)`). Features are always standardized first.
+Alpha comes from the same grid everywhere: **17 values from 1e-2 to 1e6**
+(`numpy.logspace(-2, 6, 17)`). Features are always standardized first. The
+grid runs well past the point where a 7- or 512-feature head on <=100
+standardized samples is fully shrunk, so the top of it is a floor the
+selector can actually reach rather than a cliff it is cut off before -
+which matters most under variants B and C, where full shrinkage lands on
+the population formula instead of on a constant.
 
 How the winner is picked depends on whether the component is shared or
 personal (Sec. 2). A **shared** ridge is fit on the train group at each
-alpha and scored by MSE on the validation group; the best alpha wins. A
-**personal** ridge uses `RidgeCV`'s generalized (efficient leave-one-out)
-cross-validation inside that user's own support set.
+alpha and scored by MSE on the validation group. A **personal** ridge is
+selected by mirroring the test protocol inside the validation group and
+averaging SROCC over validation user-units; the value is then frozen and
+applied to every test user.
+
+Ties are broken toward the **strongest** penalty - among alphas that are
+indistinguishable on the validation group, the most regularized one is the
+conservative choice, and picking it by rule keeps the result from depending
+on the last few floating-point bits.
 
 Fitting a mediator on shuffled labels and then selecting its alpha honestly
 drives it to the top of the grid (1e3, i.e. maximal shrinkage), because
@@ -153,15 +204,55 @@ features and averaged across units. This is defined only for linear heads.
 
 ### MLP
 
-A single hidden layer of 128 units, ReLU, trained with MSE loss and no
-weight decay (alpha = 0). The learning rate is chosen from 5 values
-between 1e-4 and 1e-2, then the model is refit on the full data with the
-chosen rate. Which data scores the 5 candidates follows the same rule as
-ridge: a shared MLP is scored on the validation user group, a personal MLP
-on a 20% split of that user's own support set.
+**A single hidden layer of 128 units, ReLU, used throughout** - the same
+width in the extractor (features -> 7 concepts) and in the predictor
+(7 concepts -> 1 score). Trained with MSE loss, Adam, and **no weight decay
+(alpha = 0, fixed in advance, not tuned)**.
 
-Early stopping is used (validation_fraction 0.15, n_iter_no_change 20, max_iter 2000), which is a stopping rule.
-Loss curves in `output/mlp_diagnostics/` show it's actually converging properly, not just cut off early.
+**No early stopping, and a fixed epoch budget of 500.** With support sets as
+small as 10 ratings, sklearn's internal 85/15 validation split would leave
+one or two samples and give no usable stopping signal, so `early_stopping`
+is off. That alone is not enough: sklearn also halts on a training-loss
+plateau, so `tol=0` and `n_iter_no_change=max_iter` are set at construction
+as well. Every MLP therefore really does spend the same 500 epochs, which
+the selection log records per run (`mean_n_iter`, `frac_hit_max_iter`) rather
+than leaving it to be assumed.
+
+The epoch count is stated in advance rather than tuned. It follows that the
+MLPs are not run to convergence; they are run to a fixed, equal budget, which
+is what makes the rows comparable.
+
+**The learning rate is the only thing selected**, from five values
+(`1e-4, 3e-4, 1e-3, 3e-3, 1e-2`), by the same procedure as every other
+hyperparameter (Sec. 2): a shared MLP is scored by MSE on the validation user
+group, a personal MLP by mean SROCC over validation user-units under the
+mirrored test protocol. Ties break toward the **smallest** step - the
+conservative direction for a step size, opposite to ridge's tie-break toward
+the strongest penalty.
+
+Everything above is built in one place (`make_mlp` in
+`src/modeling/heads.py`), so the extractor and the predictor cannot drift
+apart. `MLPHead.fit` raises rather than selecting a rate itself when none is
+frozen, so a fallback to the user's own support set cannot come back by
+accident.
+
+#### The three MLP rows
+
+| reported as | Stage-1 (extractor) | Stage-2 (predictor) | mediator / head |
+|---|---|---|---|
+| Ridge -> Ridge | ridge d->7 | ridge 7->1 | `emotion` / `ridge` |
+| MLP -> MLP sequential | MLP d->128->7, emotion loss only | MLP 7->128->1 | `emotion_mlp` / `mlp` |
+| MLP -> MLP joint | MLP d->128->7->1, emotion + score loss | MLP 7->128->1 | `emotion_joint` / `mlp` |
+
+The joint extractor's score head reads the **seven concepts**, not the hidden
+layer, so the score gradient is forced through the bottleneck - hanging it off
+the hidden layer instead would leave the concepts under emotion supervision
+alone, which is sequential training wearing a joint label. Its loss is
+`MSE(concepts) + w * MSE(score)` with `w = 1`, fixed in advance; the two
+targets sit on comparable scales (emotion sd ~ 0.55, score sd ~ 0.70).
+
+The mixed combinations the grid also produces (`emotion_mlp` + `ridge`, and
+so on) are not reported.
 
 ## 6. Backbones
 
