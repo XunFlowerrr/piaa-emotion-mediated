@@ -64,8 +64,8 @@ def send_persistent_macos_alert(title: str, message: str, open_folder: Path | No
         pass
 
 
-def poll_suite(suite_name: str, interval: int = 15, auto_sync: bool = True):
-    """Poll Modal Volume and Function status until suite completion, then send macOS Notification."""
+def poll_suite(suite_name: str, interval: int = 15, auto_sync: bool = True, notify_mode: str = "both"):
+    """Poll Modal Volume and Function status until suite completion, then send selected macOS Notification."""
     if not HAS_MODAL:
         print("[ERROR] 'modal' package is not installed.")
         sys.exit(1)
@@ -93,7 +93,7 @@ def poll_suite(suite_name: str, interval: int = 15, auto_sync: bool = True):
     print("=" * 80)
     print(f"📡 MODAL CLOUD WATCHER: Suite '{suite.name}' ({suite.title})")
     print(f"Tracking {total_steps} step(s): {', '.join(expected_folders)}")
-    print(f"Poll Interval: {interval}s | macOS Banner Alert: ENABLED (Silent)")
+    print(f"Poll Interval: {interval}s | Notification Mode: {notify_mode.upper()}")
     print(f"Auto-Sync: {'ENABLED' if auto_sync else 'DISABLED'}")
     print("=" * 80)
 
@@ -109,17 +109,17 @@ def poll_suite(suite_name: str, interval: int = 15, auto_sync: bool = True):
             found_paths = []
 
         for s in suite.steps:
-            # A step is complete if its summary or raw CSV exists in Volume
             step_has_files = any(s.folder in p and (p.endswith(".csv") or p.endswith(".json")) for p in found_paths)
             if step_has_files and s.folder not in completed_steps:
                 completed_steps.add(s.folder)
                 elapsed_cur = time.time() - start_time
                 print(f"  [✔ STEP DONE] '{s.codename}' completed on cloud in {elapsed_cur / 60:.1f}m!")
-                send_macos_banner(
-                    title="PIAA Experiment Progress",
-                    subtitle=f"Step Completed: {s.codename}",
-                    message=f"Step {len(completed_steps)}/{total_steps} finished on Modal Cloud."
-                )
+                if notify_mode in ("banner", "both"):
+                    send_macos_banner(
+                        title="PIAA Experiment Progress",
+                        subtitle=f"Step Completed: {s.codename}",
+                        message=f"Step {len(completed_steps)}/{total_steps} finished on Modal Cloud."
+                    )
 
         done_count = len(completed_steps)
         elapsed = time.time() - start_time
@@ -141,19 +141,21 @@ def poll_suite(suite_name: str, interval: int = 15, auto_sync: bool = True):
     print(f"🎉 ALL {total_steps} STEPS COMPLETED ON MODAL CLOUD in {total_elapsed / 60:.2f} minutes!")
     print("=" * 80)
 
-    # 1. Trigger macOS Notification Banner
-    send_macos_banner(
-        title="PIAA Experiment Finished! 🎉",
-        subtitle=f"Suite '{suite.name}' 100% Completed",
-        message=f"All {total_steps} steps finished on Modal Cloud ({total_elapsed / 60:.1f}m)."
-    )
+    # 1. Trigger Banner if requested
+    if notify_mode in ("banner", "both"):
+        send_macos_banner(
+            title="PIAA Experiment Finished! 🎉",
+            subtitle=f"Suite '{suite.name}' 100% Completed",
+            message=f"All {total_steps} steps finished on Modal Cloud ({total_elapsed / 60:.1f}m)."
+        )
 
-    # 2. Trigger Persistent macOS Alert Dialog (STAYS ON SCREEN until clicked!)
-    send_persistent_macos_alert(
-        title=f"Suite '{suite.name}' 100% Finished! 🎉",
-        message=f"All {total_steps} steps finished on Modal Cloud in {total_elapsed / 60:.1f} minutes.\nFiles are saved in output/{suite.name}/modal/.",
-        open_folder=suite.output_dir / "modal"
-    )
+    # 2. Trigger Persistent Alert Dialog if requested (Stay-On-Screen)
+    if notify_mode in ("dialog", "both"):
+        send_persistent_macos_alert(
+            title=f"Suite '{suite.name}' 100% Finished! 🎉",
+            message=f"All {total_steps} steps finished on Modal Cloud in {total_elapsed / 60:.1f} minutes.\nFiles are saved in output/{suite.name}/modal/.",
+            open_folder=suite.output_dir / "modal"
+        )
 
     # 3. Auto Sync if enabled
     if auto_sync:
@@ -171,9 +173,16 @@ def main():
     parser.add_argument("suite_name", type=str, help="Name of the suite to watch (e.g. logical_capybara, demonic_bobcat)")
     parser.add_argument("--interval", "-i", type=int, default=15, help="Polling interval in seconds (default: 15)")
     parser.add_argument("--no-sync", action="store_true", help="Disable automatic downloading upon completion")
+    parser.add_argument(
+        "--notify",
+        "-n",
+        choices=["both", "dialog", "banner", "none"],
+        default="both",
+        help="Notification mode: 'dialog' (Stay-On-Screen popup), 'banner' (sliding banner), 'both' (popup + banner), or 'none' (default: both)"
+    )
     args = parser.parse_args()
 
-    poll_suite(args.suite_name, interval=args.interval, auto_sync=not args.no_sync)
+    poll_suite(args.suite_name, interval=args.interval, auto_sync=not args.no_sync, notify_mode=args.notify)
 
 
 if __name__ == "__main__":
