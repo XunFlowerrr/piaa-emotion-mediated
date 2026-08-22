@@ -174,11 +174,17 @@ def main():
     p_show.add_argument("suite_name", type=str, help="Name of the suite (e.g. rebuttal, hayashi, first)")
 
     # run
-    p_run = sub.add_parser("run", help="Run experiments in a suite")
+    p_run = sub.add_parser("run", help="Execute experiment steps in a suite")
     p_run.add_argument("suite_name", type=str, help="Name of the suite to run")
     g_run = p_run.add_mutually_exclusive_group(required=True)
     g_run.add_argument("--all", action="store_true", help="Run all steps in this suite")
     g_run.add_argument("--run", "-r", type=str, help="Sub-run codename(s) or number(s) to run (e.g. '1,3' or 'joint-c')")
+    p_run.add_argument("--modal", "-m", action="store_true", help="Execute on Modal Serverless (16-core CPU containers in cloud)")
+    p_run.add_argument("--detach", "-d", action="store_true", help="Execute in detached background mode on Modal (safe from connection drops)")
+
+    # sync
+    p_sync = sub.add_parser("sync", help="Download and synchronize completed outputs from Modal Cloud Volume")
+    p_sync.add_argument("suite_name", type=str, help="Name of the suite to sync")
 
     # zip
     p_zip = sub.add_parser("zip", help="Package a suite's output files into a zip archive")
@@ -209,7 +215,19 @@ def main():
             selected = suite.steps
         else:
             selected = resolve_selection(suite, args.run)
-        run_suite_steps(suite, selected)
+
+        if args.modal or args.detach:
+            from src.utils.modal_engine import run_suite_steps_modal
+            run_suite_steps_modal(suite, selected, detach=args.detach)
+        else:
+            run_suite_steps(suite, selected)
+    elif args.command == "sync":
+        suite = get_suite(args.suite_name)
+        if not suite:
+            print(f"Error: Suite '{args.suite_name}' not found.")
+            sys.exit(1)
+        from src.utils.modal_engine import sync_modal_outputs
+        sync_modal_outputs(suite)
     elif args.command == "zip":
         suite = get_suite(args.suite_name)
         if not suite:

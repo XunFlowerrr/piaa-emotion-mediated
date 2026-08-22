@@ -360,11 +360,19 @@ def run_suite_cli(suite: Suite):
     group.add_argument("--run", "-r", type=str, help="Sub-run codename(s) or number(s) to run (e.g. '1,3' or 'joint-c')")
     group.add_argument("--list", "-l", action="store_true", help="List all codenames, status, and commands in this suite")
     group.add_argument("--zip", "-z", action="store_true", help="Package all completed outputs of this suite into a zip file")
-    ap.add_argument("--modal", "-m", action="store_true", help="Execute on Modal Serverless (32-core CPU containers in cloud)")
+    group.add_argument("--sync", "-s", action="store_true", help="Download and synchronize completed outputs from Modal Cloud Volume")
+
+    ap.add_argument("--modal", "-m", action="store_true", help="Execute on Modal Serverless (16-core CPU containers in cloud)")
+    ap.add_argument("--detach", "-d", action="store_true", help="Execute in detached background mode on Modal (safe from connection drops)")
     args = ap.parse_args()
 
     if args.list:
         render_suite_table(suite)
+        return
+
+    if args.sync:
+        from src.utils.modal_engine import sync_modal_outputs
+        sync_modal_outputs(suite)
         return
 
     if args.zip:
@@ -376,9 +384,9 @@ def run_suite_cli(suite: Suite):
     else:
         selected = resolve_selection(suite, args.run)
 
-    if args.modal:
+    if args.modal or args.detach:
         from src.utils.modal_engine import run_suite_steps_modal
-        run_suite_steps_modal(suite, selected)
+        run_suite_steps_modal(suite, selected, detach=args.detach)
     else:
         run_suite_steps(suite, selected)
 
