@@ -246,19 +246,22 @@ def run_suite_steps_modal(suite, steps_to_run, detach: bool = False):
         })
 
     if detach:
-        # Detached mode: Spawn and exit immediately!
-        print(f"\n[+] Dispatching {len(payloads)} task(s) to Modal Cloud in the background...")
-        with app.run():
-            for p in payloads:
-                handle = run_step_remote.spawn(p)
-                print(f"  [🚀 SPAWNED] Step '{p['codename']}' -> Cloud Task Handle: {handle}")
+        print(f"\n[+] Deploying App to Modal Cloud for persistent detached background execution...")
+        app.deploy()
+        fn = modal.Function.from_name("piaa-emotion-mediated", "run_step_remote")
+
+        print(f"[+] Dispatching {len(payloads)} persistent 16-core container task(s) to Modal Cloud...")
+        for p in payloads:
+            handle = fn.spawn(p)
+            print(f"  [🚀 SPAWNED] Step '{p['codename']}' -> Task ID: {handle.object_id}")
 
         print("\n" + "=" * 80)
-        print("🛡️  DETACHED EXECUTION ACTIVE:")
-        print("• All jobs are now computing independently in Modal Cloud on 16-core CPU containers.")
-        print("• You can safely close your laptop, turn off Wi-Fi, or disconnect at any time.")
-        print("• Every completed fold is automatically saved to the persistent Modal Cloud Volume.")
-        print(f"\n👉 When you are ready to download the results, run:")
+        print("🛡️  DETACHED EXECUTION IS NOW ACTIVE ON MODAL CLOUD:")
+        print(f"• {len(payloads)} parallel 16-Core containers are running in the background on Modal.")
+        print("• You can safely close your laptop, turn off Wi-Fi, or shut down your terminal.")
+        print("• Every completed fold is being written directly to Modal Volume ('piaa-outputs-vol').")
+        print(f"\n👉 To monitor progress on Web Dashboard: https://modal.com/apps")
+        print(f"👉 When the runs finish, download all outputs locally with:")
         print(f"   uv run run_{suite.name}.py --sync")
         print("=" * 80)
         return
