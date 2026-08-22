@@ -32,13 +32,34 @@ from suites import get_suite
 
 def send_macos_banner(title: str, subtitle: str, message: str):
     """Trigger a silent native macOS Notification Center banner (no sound)."""
-    # Sanitize quotes
     clean_title = title.replace('"', '\\"')
     clean_sub = subtitle.replace('"', '\\"')
     clean_msg = message.replace('"', '\\"')
     script = f'display notification "{clean_msg}" with title "{clean_title}" subtitle "{clean_sub}"'
     try:
         subprocess.run(["osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+
+def send_persistent_macos_alert(title: str, message: str, open_folder: Path | None = None):
+    """Trigger a persistent native macOS Alert Dialog popup that STAYS ON SCREEN until clicked."""
+    clean_title = title.replace('"', '\\"')
+    clean_msg = message.replace('"', '\\"')
+
+    if open_folder and open_folder.exists():
+        script = f'''
+        set btn to button returned of (display alert "{clean_title}" message "{clean_msg}" as informational buttons {{"Open Folder", "OK"}} default button "OK")
+        if btn is "Open Folder" then
+            tell application "Finder" to reveal POSIX file "{str(open_folder.resolve())}"
+            tell application "Finder" to activate
+        end if
+        '''
+    else:
+        script = f'display alert "{clean_title}" message "{clean_msg}" as informational buttons {{"OK"}} default button "OK"'
+
+    try:
+        subprocess.Popen(["osascript", "-e", script], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
 
@@ -127,7 +148,14 @@ def poll_suite(suite_name: str, interval: int = 15, auto_sync: bool = True):
         message=f"All {total_steps} steps finished on Modal Cloud ({total_elapsed / 60:.1f}m)."
     )
 
-    # 2. Auto Sync if enabled
+    # 2. Trigger Persistent macOS Alert Dialog (STAYS ON SCREEN until clicked!)
+    send_persistent_macos_alert(
+        title=f"Suite '{suite.name}' 100% Finished! 🎉",
+        message=f"All {total_steps} steps finished on Modal Cloud in {total_elapsed / 60:.1f} minutes.\nFiles are saved in output/{suite.name}/modal/.",
+        open_folder=suite.output_dir / "modal"
+    )
+
+    # 3. Auto Sync if enabled
     if auto_sync:
         from src.utils.modal_engine import sync_modal_outputs
         print("\n[+] Automatically synchronizing files from Modal Volume...")
