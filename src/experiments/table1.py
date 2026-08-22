@@ -23,6 +23,7 @@ import pandas as pd
 
 from src.data.data import DOMAINS
 from src.utils.metrics import mean_sd, plcc, sem, srocc, wilcoxon_paired
+from src.utils import selection_log
 from src.utils.results_db import record
 
 #: row order (mediator, head)
@@ -76,6 +77,7 @@ def run_one_seed(cfg, pipeline, seed: int, variant: str | None = None,
     heads = list(heads or HEADS)
     mediators = list(mediators or MEDIATORS)
     print(f"[table1] seed {seed} variant {variant} heads {heads} meds {mediators}")
+    pipeline.experiment_name = "table1"
     d = pipeline.run_grid(
         mediators=mediators,
         heads=heads,
@@ -92,7 +94,15 @@ def run_one_seed(cfg, pipeline, seed: int, variant: str | None = None,
     f = (out_dir /
          f"per_unit{_tag(variant)}{_htag(heads)}{_mtag(mediators)}_seed{seed}.csv")
     d.to_csv(f, index=False)
+    # the hyperparameters behind those numbers, next to the numbers: which
+    # penalty / (learning rate, weight decay) each component ended up with,
+    # the grid it beat, and how much it beat it by
+    sf = (out_dir /
+          f"selection{_tag(variant)}{_htag(heads)}{_mtag(mediators)}_seed{seed}.csv")
+    selection_log.write(pipeline.selection_records, sf)
     print(f"[table1] seed {seed} variant {variant} written ({len(d)} rows) -> {f.name}")
+    print(f"[table1] seed {seed} selection log "
+          f"({len(pipeline.selection_records)} rows) -> {sf.name}")
     record(d, "table1", backbone=cfg.backbone, variant=variant,
            n_train=cfg.n_train)
     return d

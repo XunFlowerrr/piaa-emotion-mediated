@@ -31,6 +31,7 @@ from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
+from src.utils import selection_log
 from src.utils.metrics import effective_dof
 
 
@@ -72,7 +73,8 @@ class Head(ABC):
 ALPHA_TIE_RTOL = 1e-9
 
 
-def select_alpha_on_val(X, Y, val, alphas) -> float:
+def select_alpha_on_val(X, Y, val, alphas, *, stage="shared",
+                        component="ridge", mediator=None, head=None) -> float:
     """Pick the ridge penalty that does best on the held-out validation group.
 
     Fit on the train-group data, score MSE on the validation group, take the
@@ -82,6 +84,11 @@ def select_alpha_on_val(X, Y, val, alphas) -> float:
     statistically indistinguishable on the validation group, the most
     regularized one is the conservative choice, and picking it by rule makes
     the result reproducible rather than dependent on the last few bits.
+
+    stage/component/mediator name what is being selected, for the selection
+    log; they do not affect the result. Every caller labels itself, because
+    one run selects a penalty here four times over for four different things
+    and an unlabelled log could not tell them apart.
     """
     Xv, Yv = val
     alphas = np.asarray(alphas, float)
@@ -91,7 +98,11 @@ def select_alpha_on_val(X, Y, val, alphas) -> float:
         p.fit(X, Y)
         mses[i] = np.mean((p.predict(Xv) - Yv) ** 2)
     tied = mses <= mses.min() * (1.0 + ALPHA_TIE_RTOL)
-    return float(alphas[tied][-1])          # alphas is ascending -> strongest
+    chosen = float(alphas[tied][-1])        # alphas is ascending -> strongest
+    selection_log.note(stage, component, "val_mse", alphas, mses, chosen,
+                       lower_is_better=True, mediator=mediator, head=head,
+                       n_val_scored=len(np.asarray(Yv)), n_val_kind="images")
+    return chosen
 
 
 class RidgeHead(Head):
@@ -118,7 +129,9 @@ class RidgeHead(Head):
             self._pipe.fit(M, y)
             self._alpha = float(self._pipe[-1].alpha_)
         else:
-            self._alpha = select_alpha_on_val(M, y, val, self.alphas)
+            self._alpha = select_alpha_on_val(
+                M, y, val, self.alphas,
+                stage="population_head", component="giaa_ridge", head="ridge")
             self._pipe = make_pipeline(StandardScaler(), Ridge(alpha=self._alpha))
             self._pipe.fit(M, y)
         self._M_train = np.asarray(M, float)
@@ -287,6 +300,15 @@ class MLPHead(Head):
         self.model.fit(M, np.asarray(y, float).ravel())
         return self
 
+    @property
+    def n_iter_(self) -> float:
+        """Epochs actually run. tol=0 and n_iter_no_change=max_iter mean this
+        should equal cfg.mlp_max_iter for every fit; when it does, "500
+        epochs" is a budget the optimizer ran out of rather than a point it
+        converged to, and that is worth having on the record next to the
+        score it produced."""
+        return float(mlp_iterations(self.model))
+
     def _select_on_val(self, M, y, val):
         """Shared-component path: the GIAA head is fit on the training group
         and scored on the validation group, the same rule select_alpha_on_val
@@ -298,8 +320,13 @@ class MLPHead(Head):
                      .fit(M, np.asarray(y, float).ravel()).predict(Mv)
                      - np.asarray(yv, float).ravel()) ** 2)
             for lr, a in grid])
-        return conservative_mlp_hp(
+        chosen = conservative_mlp_hp(
             [g for g, m in zip(grid, mses) if m <= mses.min() * (1.0 + ALPHA_TIE_RTOL)])
+        selection_log.note("population_head", "giaa_mlp", "val_mse",
+                           grid, mses, chosen, lower_is_better=True,
+                           head="mlp", n_val_scored=len(np.asarray(yv)),
+                           n_val_kind="images")
+        return chosen
 
     def predict(self, M):
         return np.asarray(self.model.predict(M), float).ravel()
@@ -307,6 +334,12 @@ class MLPHead(Head):
     @property
     def hp_(self) -> tuple:
         return self._hp
+
+
+def mlp_iterations(model) -> float:
+    """Epochs the fitted MLP ran, through the scaler pipeline if there is one."""
+    net = model[-1] if hasattr(model, "__getitem__") else model
+    return float(getattr(net, "n_iter_", np.nan))
 
 
 def conservative_mlp_hp(tied):

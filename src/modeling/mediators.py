@@ -32,8 +32,10 @@ from sklearn.linear_model import Ridge, RidgeCV
 from sklearn.pipeline import make_pipeline
 from sklearn.preprocessing import StandardScaler
 
+from src.utils import selection_log
 
-def _shared_ridge(Xg, Yg, alphas, val=None):
+
+def _shared_ridge(Xg, Yg, alphas, val=None, label=None):
     """Ridge for a shared (population-level) mediator.
 
     The mediator is a shared component, so its penalty is chosen on the
@@ -41,6 +43,9 @@ def _shared_ridge(Xg, Yg, alphas, val=None):
     disjoint from both the train users it is fit on and the test users it is
     scored on. Falls back to RidgeCV's internal generalized CV only if no
     validation data was passed (used by ad-hoc scripts, never by the paper).
+
+    label is the mediator's name, so the selection log can say which of the
+    Stage-1 ridges a penalty belongs to.
     """
     from src.modeling.heads import select_alpha_on_val
 
@@ -49,12 +54,17 @@ def _shared_ridge(Xg, Yg, alphas, val=None):
         m = make_pipeline(StandardScaler(), RidgeCV(alphas=alphas))
     else:
         m = make_pipeline(StandardScaler(),
-                          Ridge(alpha=select_alpha_on_val(Xg, Yg, val, alphas)))
+                          Ridge(alpha=select_alpha_on_val(
+                              Xg, Yg, val, alphas, stage="stage1",
+                              component="stage1_ridge", mediator=label)))
     m.fit(Xg, Yg)
+    selection_log.note_fit("stage1", "stage1_ridge", "mediator_width",
+                           np.asarray(Yg).reshape(len(Yg), -1).shape[1],
+                           mediator=label)
     return m
 
 
-def _shared_mlp(Xg, Yg, cfg, seed, val):
+def _shared_mlp(Xg, Yg, cfg, seed, val, label=None):
     """Stage-1 as a one-hidden-layer MLP, hyperparameters from the val group.
 
     Deliberately the same shape as _shared_ridge: fit on the training group,
@@ -65,7 +75,8 @@ def _shared_mlp(Xg, Yg, cfg, seed, val):
     values while leaving the MLP's fixed would put a handicap in the table
     and call it a model family.
     """
-    from src.modeling.heads import ALPHA_TIE_RTOL, conservative_mlp_hp, make_mlp, mlp_grid
+    from src.modeling.heads import (ALPHA_TIE_RTOL, conservative_mlp_hp,
+                                    make_mlp, mlp_grid, mlp_iterations)
 
     if val is None:
         raise ValueError("a Stage-1 MLP needs the validation group")
@@ -75,7 +86,15 @@ def _shared_mlp(Xg, Yg, cfg, seed, val):
                      for lr, a in grid])
     lr, alpha = conservative_mlp_hp(
         [g for g, m in zip(grid, mses) if m <= mses.min() * (1.0 + ALPHA_TIE_RTOL)])
-    return make_mlp(cfg, lr, alpha, seed).fit(Xg, Yg)
+    selection_log.note("stage1", "stage1_mlp", "val_mse", grid, mses, (lr, alpha),
+                       lower_is_better=True, mediator=label,
+                       n_val_scored=len(np.asarray(Yv)), n_val_kind="images")
+    fitted = make_mlp(cfg, lr, alpha, seed).fit(Xg, Yg)
+    selection_log.note_fit("stage1", "stage1_mlp", "n_iter",
+                           mlp_iterations(fitted), mediator=label,
+                           lr=lr, alpha=alpha,
+                           extra_note=f"max_iter={cfg.mlp_max_iter}")
+    return fitted
 
 
 class _JointNet:
@@ -196,7 +215,7 @@ class _JointNet:
         return C
 
 
-def _shared_joint(Xg, Eg, yg, cfg, seed, val, yv):
+def _shared_joint(Xg, Eg, yg, cfg, seed, val, yv, label=None):
     """Joint Stage-1, hyperparameters selected on the validation user group.
 
     Same protocol as the other two Stage-1s -- fit on the training group,
@@ -222,6 +241,11 @@ def _shared_joint(Xg, Eg, yg, cfg, seed, val, yv):
                        for lr, a in grid])
     lr, alpha = conservative_mlp_hp(
         [g for g, l in zip(grid, losses) if l <= losses.min() * (1.0 + ALPHA_TIE_RTOL)])
+    selection_log.note("stage1", "stage1_joint", "val_joint_loss",
+                       grid, losses, (lr, alpha), lower_is_better=True,
+                       mediator=label, n_val_scored=len(np.asarray(yv)),
+                       n_val_kind="images",
+                       extra_note=f"score_weight={cfg.joint_score_weight}")
     return build(lr, alpha).fit(Xg, Eg, yg)
 
 
@@ -338,14 +362,14 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
         out["identity"] = IdentityMediator()
     if "emotion" in want:
         out["emotion"] = EmotionMediator(
-            _shared_ridge(Xg, Eg, cfg.ridge_alphas, val))
+            _shared_ridge(Xg, Eg, cfg.ridge_alphas, val, label="emotion"))
     if "pca" in want:
         out["pca"] = PCAMediator(PCA(n_components=K, random_state=0).fit(Xg))
     if "random" in want:
         out["random"] = RandomMediator(R)
     if "shuffled" in want:
         out["shuffled"] = ShuffledMediator(
-            _shared_ridge(Xg, Eg[perm], cfg.ridge_alphas, val))
+            _shared_ridge(Xg, Eg[perm], cfg.ridge_alphas, val, label="shuffled"))
 
     # --- Stage-1 as its own axis: the MLP series ------------------------
     # Same seven concepts, same targets, same validation-group selection
@@ -354,13 +378,14 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
     # them cannot move the random/shuffled numbers above.
     if "emotion_mlp" in want:
         out["emotion_mlp"] = EmotionMediator(
-            _shared_mlp(Xg, Eg, cfg, rng_seed, val))
+            _shared_mlp(Xg, Eg, cfg, rng_seed, val, label="emotion_mlp"))
     if "emotion_joint" in want:
         if yg is None or val_y is None:
             raise ValueError("emotion_joint needs the training- and "
                              "validation-group mean scores (yg, val_y)")
         out["emotion_joint"] = EmotionMediator(
-            _shared_joint(Xg, Eg, yg, cfg, rng_seed, val, val_y))
+            _shared_joint(Xg, Eg, yg, cfg, rng_seed, val, val_y,
+                          label="emotion_joint"))
 
     # --- distribution-valued Stage-1 ------------------------------------
     # Same seven named concepts, but Stage-1 predicts how the raters were
@@ -376,7 +401,7 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
                 raise ValueError(f"{key} needs Dg['{key}'] (per-image targets)")
             out[key] = EmotionMediator(
                 _shared_ridge(Xg, Dg[key], cfg.ridge_alphas,
-                              (val_dist or {}).get(key)))
+                              (val_dist or {}).get(key), label=key))
 
     if "pca35" in want:
         out["pca35"] = PCAMediator(PCA(n_components=35, random_state=0).fit(Xg))
@@ -388,6 +413,7 @@ def build_shared_mediators(Xg: np.ndarray, Eg: np.ndarray, cfg, fold_index: int,
         out["shuffled35"] = ShuffledMediator(
             _shared_ridge(Xg, Dg["emotion_hist"].values[perm35] if hasattr(Dg["emotion_hist"], "values")
                          else Dg["emotion_hist"][perm35],
-                         cfg.ridge_alphas, (val_dist or {}).get("emotion_hist")))
+                         cfg.ridge_alphas, (val_dist or {}).get("emotion_hist"),
+                         label="shuffled35"))
 
     return out

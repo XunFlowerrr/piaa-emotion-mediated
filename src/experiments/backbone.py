@@ -22,6 +22,7 @@ import pandas as pd
 
 from src.modeling.backbones import backbone_label
 from src.utils.metrics import mean_sd, sem, wilcoxon_paired
+from src.utils import selection_log
 from src.utils.results_db import record
 
 
@@ -52,9 +53,11 @@ def run(cfg, backbone_names: list[str], variant: str | None = None,
     print(f"[backbone] common image set across {backbone_names}: {len(shared)}")
 
     frames = []
+    selections = []
     for name in backbone_names:
         print(f"[backbone] {name}")
         ds, _, _, pipe = build(cfg, name)
+        pipe.experiment_name = "backbone"
         ds.restrict_to_features(shared)
         # the population row is what the personalized rows have to beat, so it
         # is computed per backbone rather than assumed constant
@@ -67,10 +70,12 @@ def run(cfg, backbone_names: list[str], variant: str | None = None,
         # database requires the column
         df["seed"] = 0
         frames.append(df)
+        selections.extend(pipe.selection_records)
         record(df, "backbone", backbone=name, variant=variant,
                n_train=cfg.n_train)
     allf = pd.concat(frames, ignore_index=True)
     allf.to_csv(out_dir / f"per_unit{tag}.csv", index=False)
+    selection_log.write(selections, out_dir / f"selection{tag}.csv")
 
     summary = summarize(allf, backbone_names)
     summary.to_csv(out_dir / f"summary{tag}.csv", index=False)

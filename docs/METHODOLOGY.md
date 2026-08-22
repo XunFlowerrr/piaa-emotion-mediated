@@ -70,6 +70,35 @@ select, so nothing is chosen for them from any data.
 
 `uv run main.py verify --splits` checks points 1 and 3 automatically.
 
+### What each run selected: `selection*.csv`
+
+Every run writes a selection log next to its results (`selection<tag>_seed<s>.csv`
+in `output/table1/`, `selection<tag>.csv` in `output/efficiency/<backbone>/` and
+`output/backbone/`). Without it a finished run cannot answer "which learning
+rate did the MLP head get?" - the winner was passed to a constructor and
+dropped, and recovering it meant re-running the selection, which costs as much
+as the run.
+
+One row per **candidate**, not per winner, because the winner alone hides the
+two things that decide whether a selection meant anything:
+
+| column | what it tells you |
+|---|---|
+| `selected`, `rank` | which candidate won, and where the rest landed |
+| `score`, `criterion` | the value it was ranked by (`val_mse`, `val_srocc_mean`, `val_joint_loss`) |
+| `margin` | how far ahead of the best non-tied candidate it was. Near zero means the choice is noise and the next seed will overturn it |
+| `edge` | which axis ran out of grid, and at which end. `alpha:max` means the strongest weight decay on offer won, so the number is where the grid stopped, not where the optimum is |
+| `tie_size` | candidates the selector treated as tied (see `ALPHA_TIE_RTOL`) |
+| `n_val_scored`, `n_val_kind`, `n_val_users` | how much held-out data the choice rests on. The personal head averages SROCC over validation *user-units*, and a fold has as few as 6 validation users |
+
+`kind` separates ranked candidates (`selection`) from measured facts about the
+model that won (`diagnostic`): epochs actually run (`mean_n_iter`,
+`frac_hit_max_iter` - `tol=0` means an MLP runs its full budget rather than
+converging, and that is worth having next to the score), support size,
+mediator width, and mean effective d.o.f.
+
+`selection_log.summarize(records)` collapses it to one row per selection.
+
 ### Support/eval split per user
 
 A user's images in each domain are shuffled with `RandomState(42 +

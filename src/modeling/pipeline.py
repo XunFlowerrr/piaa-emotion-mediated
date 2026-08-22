@@ -19,6 +19,7 @@ from src.data.splits import V4Split, per_user_split, user_rng
 from src.modeling.heads import (ALPHA_HEADS, ALPHA_TIE_RTOL,
                                 conservative_mlp_hp, head_grid, make_head)
 from src.modeling.mediators import build_shared_mediators
+from src.utils import selection_log
 from src.utils.metrics import evaluate, srocc
 
 
@@ -187,6 +188,13 @@ class Pipeline:
         self.ds = dataset
         self.backbone = backbone
         self.split = split
+        #: every hyperparameter the last run_grid() selected, with the grid it
+        #: was selected from. The caller writes it next to its results; see
+        #: src/utils/selection_log.py for the schema.
+        self.selection_records: list[dict] = []
+        #: stamped onto those rows so one selection log can be read next to
+        #: another. Set by whichever experiment is driving.
+        self.experiment_name: str | None = None
 
     def iter_units(self, fold, domain: str, feats, n_train: int | None = None,
                   users=None):
@@ -295,7 +303,9 @@ class Pipeline:
         scaler = StandardScaler().fit(Mg)
         Zg, Zv = scaler.transform(Mg), scaler.transform(Mv)
         alphas = np.asarray(self.cfg.ridge_alphas, float)
-        a = select_alpha_on_val(Zg, yg, (Zv, yv), alphas)
+        a = select_alpha_on_val(Zg, yg, (Zv, yv), alphas, stage="anchor",
+                                component="pop_anchor",
+                                mediator=getattr(med, "name", None))
         r = Ridge(alpha=a).fit(Zg, yg)
         return scaler, r.coef_.ravel(), float(r.intercept_)
 
@@ -368,15 +378,50 @@ class Pipeline:
         tied = [c for c, s in means.items() if s >= best - abs(best) * ALPHA_TIE_RTOL]
         if is_alpha:
             # same tie-break direction as select_alpha_on_val: strongest penalty
-            return max(tied)
-        return conservative_mlp_hp(tied)
+            chosen = max(tied)
+        else:
+            chosen = conservative_mlp_hp(tied)
+        n_units = len(next(iter(scores.values()))) if scores else 0
+        selection_log.note(
+            "stage2_personal", f"personal_{kind}", "val_srocc_mean",
+            cands, [means[c] for c in cands], chosen, lower_is_better=False,
+            mediator=getattr(med, "name", None), head=kind,
+            n_val_scored=n_units, n_val_kind="user_units",
+            n_val_users=len(fold.val_users),
+            extra_note=f"variant={variant} n_train={n_train}")
+        return chosen
 
     def _eval_fold_domain(self, fold_index: int, dom: str,
                           mediators: list[str], heads: list[str],
                           n_train: int | None, include_population: bool,
                           include_gt_upper_bound: bool, seed: int,
-                          variant: str) -> list[dict]:
-        """Evaluate one (fold, domain) slice."""
+                          variant: str) -> tuple[list[dict], list[dict]]:
+        """Evaluate one (fold, domain) slice.
+
+        Returns (result rows, selection-log rows). The second element is
+        every hyperparameter this slice selected, with the grid it was
+        selected from -- see src/utils/selection_log.py. It is returned
+        rather than written here because this method runs inside a joblib
+        worker process when n_jobs > 1, and only the return value comes back.
+        """
+        cfg = self.cfg
+        with selection_log.collecting(
+                experiment=getattr(self, "experiment_name", None),
+                backbone=getattr(self.backbone, "name", None),
+                variant=variant, n_train=n_train or cfg.n_train,
+                seed=seed, fold=fold_index, domain=dom) as sel:
+            rows = self._eval_fold_domain_inner(
+                fold_index, dom, mediators, heads, n_train,
+                include_population, include_gt_upper_bound, seed, variant)
+        return rows, sel
+
+    def _eval_fold_domain_inner(self, fold_index: int, dom: str,
+                                mediators: list[str], heads: list[str],
+                                n_train: int | None, include_population: bool,
+                                include_gt_upper_bound: bool, seed: int,
+                                variant: str) -> list[dict]:
+        """The evaluation itself. Split out so the selection buffer above
+        wraps every selection, including the ones inside shared_context."""
         cfg = self.cfg
         fold = [f for f in self.split.folds() if f.index == fold_index][0]
         feats = self.backbone.features_for_fold(fold.index)
@@ -429,6 +474,11 @@ class Pipeline:
 
         print(f"  [Fold {fold.index} | {dom}] -> [3/3] Evaluating Personalized Models for {len(fold.test_users)} Test Users...", flush=True)
         rows = []
+        # what the frozen hyperparameter produced once it met a real user:
+        # epochs run, support size, and how much of the head survived. Kept
+        # per (mediator, head) and summarized after the loop, because one row
+        # per user would bury the selection log it lives in.
+        diag: dict = {}
         for u_idx, unit in enumerate(self.iter_units(fold, dom, feats, n_train=n_train), 1):
             if u_idx % 10 == 0 or u_idx == len(fold.test_users):
                 print(f"    [Fold {fold.index} | {dom}] Test User {u_idx}/{len(fold.test_users)} evaluated", flush=True)
@@ -462,6 +512,12 @@ class Pipeline:
                     rows.append({**base, "mediator": mname, "head": h,
                                  "eff_dof": head.effective_dof(),
                                  **evaluate(unit.y_eval, p)})
+                    d = diag.setdefault((mname, h), {"n_iter": [], "dof": [],
+                                                     "n_support": [], "width": []})
+                    d["n_iter"].append(_head_n_iter(head))
+                    d["dof"].append(head.effective_dof())
+                    d["n_support"].append(len(unit.y_train))
+                    d["width"].append(M_tr.shape[1])
 
             if include_gt_upper_bound:
                 # a reference ceiling excluded from every fairness
@@ -472,6 +528,25 @@ class Pipeline:
                 rows.append({**base, "mediator": "gt_emotion", "head": "ridge",
                              "eff_dof": head.effective_dof(),
                              **evaluate(unit.y_eval, p)})
+
+        for (mname, h), d in diag.items():
+            lr, alpha = (frozen[(mname, h)] if h not in ALPHA_HEADS
+                         else (None, frozen[(mname, h)]))
+            for name, vals, note_ in (
+                    ("n_units", [len(d["n_iter"])], None),
+                    ("mediator_width", d["width"], None),
+                    ("n_support", d["n_support"], None),
+                    ("mean_n_iter", d["n_iter"], f"max_iter={cfg.mlp_max_iter}"),
+                    ("frac_hit_max_iter",
+                     [float(v >= cfg.mlp_max_iter) for v in d["n_iter"]
+                      if v == v], None),
+                    ("mean_eff_dof", d["dof"], None)):
+                vals = [v for v in vals if v == v]     # drop NaN
+                if vals:
+                    selection_log.note_fit(
+                        "stage2_personal", f"personal_{h}", name,
+                        float(np.mean(vals)), mediator=mname, head=h,
+                        lr=lr, alpha=alpha, extra_note=note_)
         return rows
 
     def run_grid(self, mediators: list[str], heads: list[str],
@@ -516,12 +591,14 @@ class Pipeline:
                  if (want_folds is None or fold.index in want_folds)
                  for dom in domains]
 
+        selections: list[dict] = []
         if n_jobs == 1 or len(tasks) <= 1:
             for fold_idx, dom in tasks:
-                fold_rows = self._eval_fold_domain(
+                fold_rows, fold_sel = self._eval_fold_domain(
                     fold_idx, dom, mediators, heads, n_train,
                     include_population, include_gt_upper_bound, seed, variant)
                 rows.extend(fold_rows)
+                selections.extend(fold_sel)
                 if dom == domains[-1]:
                     print(f"  fold {fold_idx} done ({len(rows)} rows)", flush=True)
         else:
@@ -532,12 +609,18 @@ class Pipeline:
                     include_population, include_gt_upper_bound, seed, variant)
                 for fold_idx, dom in tasks
             )
-            for fold_rows in results:
+            for fold_rows, fold_sel in results:
                 rows.extend(fold_rows)
+                selections.extend(fold_sel)
             for fold_idx in sorted(set(f for f, _ in tasks)):
-                f_count = sum(len(r) for (f, _), r in zip(tasks, results) if f <= fold_idx)
+                f_count = sum(len(r) for (f, _), (r, _s) in zip(tasks, results)
+                              if f <= fold_idx)
                 print(f"  fold {fold_idx} done ({f_count} rows)", flush=True)
 
+        # the caller writes it (see table1.py / efficiency.py); keeping it on
+        # the pipeline means every existing caller of run_grid still gets the
+        # same DataFrame back and nothing downstream has to change
+        self.selection_records = selections
         return pd.DataFrame(rows)
 
     def collect_user_heads(self, mediator: str = "emotion",
@@ -566,13 +649,21 @@ class Pipeline:
         return store
 
 
+def _head_n_iter(head) -> float:
+    """Epochs the personal MLP ran, through whichever variant wrapper is on
+    top of it. NaN for a head that does not iterate (ridge, lasso)."""
+    inner = getattr(head, "head", head)          # _ResidualHead wraps one
+    return float(getattr(inner, "n_iter_", np.nan))
+
+
 def _eval_fold_domain_worker(pipe: Pipeline, fold_index: int, dom: str,
                              mediators: list[str], heads: list[str],
                              n_train: int | None, include_population: bool,
                              include_gt_upper_bound: bool, seed: int,
-                             variant: str) -> list[dict]:
-    res = pipe._eval_fold_domain(
+                             variant: str) -> tuple[list[dict], list[dict]]:
+    res, sel = pipe._eval_fold_domain(
         fold_index, dom, mediators, heads, n_train,
         include_population, include_gt_upper_bound, seed, variant)
-    print(f"  --> [Parallel Worker] Fold {fold_index} ({dom}) completed successfully ({len(res)} rows)", flush=True)
-    return res
+    print(f"  --> [Parallel Worker] Fold {fold_index} ({dom}) completed successfully "
+          f"({len(res)} rows, {len(sel)} selection rows)", flush=True)
+    return res, sel

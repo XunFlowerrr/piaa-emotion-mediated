@@ -26,6 +26,7 @@ import numpy as np
 import pandas as pd
 
 from src.utils.metrics import mean_sd, sem, wilcoxon_paired
+from src.utils import selection_log
 from src.utils.results_db import record
 
 #: mediators the sweep reports. Population is added by run_grid.
@@ -73,6 +74,8 @@ def run(cfg, pipeline, n_list: list[int], variant: str | None = None,
     tag = _tag(variant, heads, mediators, backbone or cfg.backbone, folds)
 
     frames = []
+    selections = []
+    pipeline.experiment_name = "efficiency"
     for n in n_list:
         for seed in seeds:
             print(f"[efficiency] n={n} seed={seed} variant={variant} "
@@ -83,6 +86,7 @@ def run(cfg, pipeline, n_list: list[int], variant: str | None = None,
                 seed=seed, stage2_variant=variant, folds=folds)
             d["n_train"], d["seed"], d["stage2_variant"] = n, seed, variant
             frames.append(d)
+            selections.extend(pipeline.selection_records)
             record(d, "efficiency", backbone=backbone or cfg.backbone,
                    variant=variant, n_train=n)
 
@@ -94,6 +98,12 @@ def run(cfg, pipeline, n_list: list[int], variant: str | None = None,
     # the two was the real one.
     raw = pd.concat(frames, ignore_index=True)
     raw.to_csv(out_dir / f"raw{tag}.csv", index=False)
+    # every hyperparameter the sweep selected -- one selection per
+    # (n_train, seed, fold, domain, mediator, head), which is the only place
+    # a reader can check whether the support-size curve is a curve in the
+    # model or a curve in how hard the grid was pushed
+    sf = selection_log.write(selections, out_dir / f"selection{tag}.csv")
+    print(f"[efficiency] selection log ({len(selections)} rows) -> {sf.name}")
 
     key = ["n_train", "mediator", "head", "fold", "domain", "user_id"]
     df = raw.groupby(key, as_index=False)[["ccc", "srocc", "plcc", "eff_dof"]].mean()
