@@ -108,9 +108,19 @@ class Config:
     # Learning rate is selected on the validation group, by the same
     # procedure every other hyperparameter uses: mirror the test protocol
     # inside the validation users, average SROCC over their units, freeze the
-    # winner. Five values, ascending, so the tie-break toward the smallest
-    # step has a well-defined direction.
-    mlp_lr_grid: tuple = (1e-4, 3e-4, 1e-3, 3e-3, 1e-2)
+    # winner. Ascending, so the tie-break toward the smallest step has a
+    # well-defined direction.
+    #
+    # Wider than the five values docs/MLP_REBUILD_GUIDE.md fixes (1e-4..1e-2),
+    # and deliberately so: on that grid the selector ran out of room at *both*
+    # ends -- the Stage-1 extractors and the GIAA head took the largest rate on
+    # offer, every personal head took the smallest -- and a winner sitting on
+    # the edge of a grid reports where the search stopped, not where the
+    # optimum is. Half-decade steps from 1e-4 to 1e1 leave the selector
+    # somewhere to land. The `edge` column of selection*.csv says whether it
+    # did.
+    mlp_lr_grid: tuple = (1e-4, 3e-4, 1e-3, 3e-3, 1e-2,
+                          3e-2, 1e-1, 3e-1, 1e0, 3e0, 1e1)
 
     # Joint Stage-1: loss = MSE(concepts) + w * MSE(score). Fixed at 1 in
     # advance, not tuned. The two targets sit on comparable scales (emotion

@@ -30,18 +30,31 @@ This document provides a chronological record of all experiment suites, their su
 | **9** | `scarlet_swallow` | `COMPLETED (10/10)` | `output/scarlet_swallow/` (`output/scarlet_swallow/scarlet_swallow_all_runs.zip`) | Plain Sweeps (No-Anchor), Plain Distributions & Qwen8B Diagnostics Suite (10 Steps) |
 | **10** | `demonic_bobcat` | `COMPLETED (3/3)` | `output/demonic_bobcat/` (`output/demonic_bobcat/demonic_bobcat_all_runs.zip`) | Qwen3-VL 8B MLP Series Rebuild Suite (Anchor C, n=100, MLP Head, 3 Seeds) |
 | **11** | `logical_capybara` | `PENDING (0/3)` | `output/logical_capybara/` (`output/logical_capybara/logical_capybara_all_runs.zip`) | Table 1 Control Baselines Suite (identity, random, pca under MLP Head, Stage-2 C, 3 Seeds) |
+| **12** | `thundering_lobster` | `PENDING (0/3)` | `output/thundering_lobster/` (`output/thundering_lobster/thundering_lobster_all_runs.zip`) | Qwen3-VL 8B MLP Series, pure MSE (no L2) and wide LR grid, all 7 mediators under MLP Head (Anchor C, n=100, 3 Seeds) |
 
 ---
 
-## 🗄️ Where these suites now live
+## 🗄️ Where these suites live
 
-All 11 suites above have been retired to [`archive/suites/`](archive/suites/) —
+Suites **1–11** have been retired to [`archive/suites/`](archive/suites/) —
 each one's `SUITE` definition plus its generated `run_<codename>.py`, kept
-together. Their results moved to `archive-output/<codename>/`. `suites/` is
-empty, so `uv run suite.py list` reports only live suites (currently none).
+together. Their results moved to `archive-output/<codename>/`. See
+[`archive/suites/README.md`](archive/suites/README.md) to bring one back.
 
-See [`archive/suites/README.md`](archive/suites/README.md) to bring one back;
-the commands below apply to a suite that is live in `suites/`.
+**Live in `suites/`: `thundering_lobster` (#12).** That is what
+`uv run suite.py list` reports and what the commands below apply to.
+
+### Why #12 supersedes the MLP rows of #10 and #11
+
+Everything MLP in `demonic_bobcat` (#10) and `logical_capybara` (#11) was
+produced with weight decay searched over `(1e-3, 1e-1, 1e1)` and a
+learning-rate grid of three values. The per-candidate selection log added
+afterwards showed the decay axis pinned at its maximum on **every** selection,
+and the guide's five-value rate grid exhausted at **both** ends. A
+hyperparameter chosen on the boundary of its grid reports where the search
+stopped, not where the optimum is, so those MLP numbers are not reportable.
+`thundering_lobster` re-runs them on pure MSE (`mlp_alpha = 0`) over eleven
+rates from `1e-4` to `1e1`. The ridge rows of #10 and #11 are unaffected.
 
 ## 🛠️ Suite Management Infrastructure (`suite.py`)
 
