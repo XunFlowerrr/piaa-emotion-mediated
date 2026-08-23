@@ -25,3 +25,12 @@ output/_duplicate_runs/
 # Quarantined results and features: kept for reference, never read by code
 no_use/
 
+# Aggregate experiment results databases (too large for GitHub)
+output/raw_all.csv
+output/raw_all_final.csv
+output/raw_all_final_before_*.csv
+archive-output/raw_all.csv
+archive-output/raw_all_final.csv
+archive-output/raw_all_final_before_*.csv
+
+
