@@ -222,13 +222,21 @@ The epoch count is stated in advance rather than tuned. It follows that the
 MLPs are not run to convergence; they are run to a fixed, equal budget, which
 is what makes the rows comparable.
 
-**The learning rate is the only thing selected**, from five values
-(`1e-4, 3e-4, 1e-3, 3e-3, 1e-2`), by the same procedure as every other
-hyperparameter (Sec. 2): a shared MLP is scored by MSE on the validation user
-group, a personal MLP by mean SROCC over validation user-units under the
-mirrored test protocol. Ties break toward the **smallest** step - the
-conservative direction for a step size, opposite to ridge's tie-break toward
-the strongest penalty.
+**The learning rate is the only thing selected**, from eleven half-decade
+values from `1e-4` to `1e1` (`1e-4, 3e-4, 1e-3, 3e-3, 1e-2, 3e-2, 1e-1, 3e-1,
+1e0, 3e0, 1e1`), by the same procedure as every other hyperparameter (Sec. 2):
+a shared MLP is scored by MSE on the validation user group, a personal MLP by
+mean SROCC over validation user-units under the mirrored test protocol. Ties
+break toward the **smallest** step - the conservative direction for a step
+size, opposite to ridge's tie-break toward the strongest penalty.
+
+The grid runs to `1e1` because a narrower one (`1e-4` to `1e-2`) was exhausted
+at both ends: the Stage-1 extractors and the GIAA head selected the largest
+rate available and every personal head selected the smallest. A winner on the
+boundary of a grid reports where the search stopped rather than where the
+optimum is, so the range was widened until the selector had somewhere to land.
+Whether it did is recorded per run in the `edge` column of `selection*.csv`,
+not assumed.
 
 Everything above is built in one place (`make_mlp` in
 `src/modeling/heads.py`), so the extractor and the predictor cannot drift

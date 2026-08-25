@@ -68,6 +68,16 @@ Then run `uv run python -c "from src.config import Config; print(Config().mlp_hi
 It should print `128`. If it errors, the dataclass field order is wrong —
 fields without defaults cannot follow fields with defaults.
 
+> **The shipped grid is wider than the five values above.** `src/config.py`
+> now runs eleven half-decade rates from `1e-4` to `1e1`. On the five-value
+> grid the selector was exhausted at both ends — the Stage-1 extractors and
+> the GIAA head took `1e-2`, the largest available, and every personal head
+> took `1e-4`, the smallest — which reports where the search stopped rather
+> than where the optimum is. Everything else here still holds: weight decay
+> stays fixed at `0.0`, the rate is still the only thing any data selects,
+> and the epoch budget is still fixed in advance. This page is kept as the
+> record of what was asked for; `docs/METHODOLOGY.md` states what is run.
+
 ## Step 2 — the Stage-2 head
 
 `src/modeling/heads.py`. Add the import at the top:

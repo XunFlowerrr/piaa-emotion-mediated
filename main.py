@@ -62,6 +62,11 @@ def main(argv=None) -> int:
     ap.add_argument("--splits", action="store_true", help="verify: check the data split")
     ap.add_argument("--parallel", action="store_true",
                     help="verify: check serial vs multi-core reproducibility")
+    ap.add_argument("--quick", action="store_true",
+                    help="verify --parallel: two slices and small grids "
+                         "(~1 min) instead of the full sweep (~15 min/seed). "
+                         "Catches every structural non-determinism; gives up "
+                         "breadth across folds and domains.")
     ap.add_argument("--repro", metavar="EXPERIMENT", default=None,
                     help="verify: run EXPERIMENT twice, check the results are "
                          "byte-identical (e.g. --repro efficiency)")
@@ -111,7 +116,9 @@ def main(argv=None) -> int:
             seeds = ([int(x) for x in str(args.seed).split(",")]
                      if args.seed is not None else (0, 1))
             n_train = int(args.n_train.split(",")[0]) if args.n_train else 10
-            return 0 if verify.check_parallel_repro(cfg, backbone=args.backbone, seeds=seeds, n_train=n_train) else 1
+            return 0 if verify.check_parallel_repro(
+                cfg, backbone=args.backbone, seeds=seeds, n_train=n_train,
+                quick=args.quick) else 1
         if args.repro:
             ds, bb, sp, pipe = build(cfg, args.backbone)
             name = args.repro
